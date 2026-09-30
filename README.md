@@ -7,7 +7,7 @@ through Amazon.in and Flipkart to read the lowest in-stock price for every varia
 | | | |
 |---|---|---|
 | **Front end** | https://festive-sale-gadget-advisor.vercel.app | ✅ live |
-| **App** | https://linkinmallik-festive-sale-gadget-advisor.hf.space | ⏳ needs the Space created — see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
+| **App** | https://linkinmallik-festive-sale-gadget-advisor.hf.space | ⏳ needs the Space created (free Gradio SDK) — see [START-HERE.md](START-HERE.md) |
 | **Status probe** | `status-service/` on Render | ⏳ needs this repo pushed |
 
 The front end is live now and degrades honestly: until the Space exists it shows "backend not deployed yet" and
@@ -20,7 +20,7 @@ and spawns four stdio MCP servers (two Node, two Python). That rules out most ho
 
 | Layer | Host | Reason |
 |---|---|---|
-| `app/` — the application | **Hugging Face Space** (Docker) | Needs ~2 GB RAM for Chrome + Xvfb + Gradio + LangGraph. The free CPU tier gives 2 vCPU / 16 GB. |
+| `app/` — the application | **Hugging Face Space** (free Gradio SDK) | Needs ~2 GB RAM for Chromium + Xvfb + Gradio + LangGraph. The free CPU tier gives 2 vCPU / 16 GB. Docker SDK is PRO-only, so the dependency set was chosen to fit one environment — see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). |
 | `web/` — landing page + health probe | **Vercel** | Static edge delivery, plus one serverless function that health-checks the backend *server-side* so the browser never hits CORS. |
 | `status-service/` — uptime probe | **Render** | Always-on external probe, so an outage is still reportable when the app itself is down. Dependency-free, fits the 512 MB free instance. |
 | this repo | **GitHub** | Single source of truth. Pushing `main` redeploys Vercel and Render; `app/` is mirrored to the Space. |
@@ -33,7 +33,9 @@ image and then OOM the moment a price check opens Chrome; moving the app to Rend
 
 ```
 app/                      the application — this directory is the Hugging Face Space root
-  Dockerfile              Chrome + Xvfb + Node 22 + two Python venvs
+  requirements.txt        pinned so browser-use and openai-agents share one environment
+  packages.txt            apt: chromium, xvfb, nodejs
+  Dockerfile              alternative two-venv build for Docker hosts
   app.py                  Gradio UI (2 tabs) and the /healthz route
   pipeline.py             LangGraph state machine, agents, scoring, MCP wiring
   price_agent/            browser-use worker, run as a subprocess in its own venv

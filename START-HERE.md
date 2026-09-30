@@ -34,8 +34,12 @@ git push -u origin main
 
 ## Step 2 — Create the Space and let the Action fill it
 
+> **This costs nothing.** Hugging Face now gates the *Docker* SDK behind PRO, so the app was reworked to run on the
+> free **Gradio** SDK instead, on free CPU-basic hardware (2 vCPU / 16 GB). See
+> ["How this runs without Docker"](#how-it-was-made-free) below.
+
 1. <https://huggingface.co/new-space> — owner `linkinmallik`, name `festive-sale-gadget-advisor`,
-   SDK **Docker → Blank**. Add no files.
+   SDK **Gradio → Blank**, hardware **CPU basic (free)**. Add no files.
 2. Create a write token: <https://huggingface.co/settings/tokens> → fine-grained → *Write access to contents of your
    Spaces*.
 3. Add it to GitHub as a secret named `HF_TOKEN`:
@@ -83,10 +87,43 @@ repository, but that does not un-expose a key that has already travelled through
 **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** — full deployment reference, including how to move the app onto Render
 paid hardware instead of Hugging Face, and a troubleshooting table.
 
+## How it was made free
+
+Hugging Face gates the Docker SDK behind PRO ($9/month). The free Gradio SDK gives you **one** Python environment,
+and this app appeared to need two, because its two core libraries disagreed about `openai`:
+
+```
+browser-use   0.13.10 -> openai==2.26.0   (exact pin)
+openai-agents 0.22.3  -> openai>=3.0.0
+```
+
+That is why the original `Dockerfile` builds a second virtualenv at `/opt/price-env`.
+
+The way out was version selection, not a second environment. `browser-use 0.11.13` still declares *flexible* ranges
+(`openai<3,>=2.7.2`, `mcp>=1.10.1`) where every 0.12+ release hard-pins them, and `openai-agents 0.17.3` is the last
+release that still accepts `openai>=2.26.0,<3` and `mcp<2`. They overlap exactly at:
+
+```
+openai==2.26.0   openai-agents==0.17.3   browser-use==0.11.13   mcp==1.26.0
+```
+
+Verified: `pip check` passes, every API the code calls exists in those versions, and the app boots and serves
+`/healthz` on that stack. **Do not bump any of those four without re-checking the other three.**
+
+Three runtime details make up for the missing Dockerfile, all in `app/`:
+
+- `packages.txt` installs `chromium`, `xvfb` and `nodejs`/`npm` via apt.
+- `pipeline.py` locates Chromium itself (`chromium`, `chromium-browser`, `google-chrome-stable`, Playwright cache),
+  and runs the price worker on the current interpreter when no separate venv exists.
+- `app.py` starts Xvfb before importing the pipeline, because the Gradio SDK fixes the start command so there is no
+  `xvfb-run` wrapper. If Xvfb is missing it falls back to headless instead of failing every lookup.
+
+`Dockerfile` is still in the repo and still works — use it on Render, Cloud Run, or a PRO Docker Space, where the
+two-venv split applies and the newest libraries can be used.
+
 ## Why the app is not on Vercel or free Render
 
-One research run takes 8–20 minutes, launches headed Google Chrome inside Xvfb, and spawns four stdio MCP servers.
+One research run takes 8–20 minutes, launches headed Chromium inside Xvfb, and spawns four stdio MCP servers.
 Vercel has no Dockerfile support, no Chrome, and function limits far below that. Render's free instance type is
-0.1 CPU / 512 MB — it builds the image, then OOM-kills the moment a price check opens Chrome. The app needs roughly
-2 GB, which the Hugging Face free CPU tier provides (2 vCPU / 16 GB). Moving it to Render means a `1c-2g` instance
-or larger; `docs/DEPLOYMENT.md` has those steps.
+0.1 CPU / 512 MB — it would OOM the moment a price check opens Chromium. The app needs roughly 2 GB, which the
+Hugging Face free CPU tier provides (2 vCPU / 16 GB).

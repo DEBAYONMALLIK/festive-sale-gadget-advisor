@@ -1,9 +1,25 @@
-openai-agents==0.22.3
-openai==3.22.1
-mcp==2.2.0
+# One environment, no Docker. These exact versions are the only combination that lets openai-agents and
+# browser-use coexist, which is what makes the free Gradio Space possible:
+#
+#   browser-use   0.11.13  ->  openai<3,>=2.7.2   mcp>=1.10.1      (flexible; 0.12+ hard-pin openai and mcp)
+#   openai-agents 0.17.3   ->  openai<3,>=2.26.0  mcp<2,>=1.19.0   (0.17.4+ require openai>=2.36)
+#   intersection             ->  openai==2.26.0     mcp==1.26.0
+#
+# Do not bump any of these four without re-checking the other three - browser-use 0.12+ pins openai==2.16.0
+# and mcp==1.26.0+ exactly, and openai-agents 0.21+ requires openai>=3, either of which breaks the set.
+openai==2.26.0
+openai-agents==0.17.3
+browser-use==0.11.13
+mcp==1.26.0
+
 langgraph==1.2.12
 pydantic==2.13.5
 pandas==3.0.6
 python-dotenv==1.2.3
 gradio==6.29.0
 tabulate
+
+# MCP servers installed as Python packages so `_cmd()` finds them on PATH and no uvx download is needed per run.
+# The Tavily and Memory servers are Node and come from packages.txt + npx.
+yt-mcp-server==0.1.2
+reddit-rss-mcp==1.2.1

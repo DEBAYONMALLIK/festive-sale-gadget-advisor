@@ -76,13 +76,36 @@ MAX_SHORTLIST = MAX_FINALISTS + 2
 MARKETPLACES = ["amazon", "flipkart"]
 PRICE_MODE = os.getenv("PRICE_MODE", "lowest")                 # "lowest" = every variant, "fast" = default variant only
 BROWSER_MODEL = os.getenv("BROWSER_MODEL", "gpt-5-mini")
-HEADLESS = _env_bool("PRICE_HEADLESS", False)                  # the Docker image runs Chrome headed inside Xvfb
+HEADLESS = _env_bool("PRICE_HEADLESS", False)                  # headed inside Xvfb when a display is available
 NO_SANDBOX = _env_bool("PRICE_NO_SANDBOX", False)
 PRICE_TIMEOUT = int(os.getenv("PRICE_TIMEOUT", "240"))
 PRICE_CONCURRENCY = int(os.getenv("PRICE_CONCURRENCY", "3"))
 PINCODE = os.getenv("PINCODE", "")
 BUDGET_TOLERANCE = float(os.getenv("BUDGET_TOLERANCE", "1.05"))
-CHROME_PATH = os.getenv("PRICE_CHROME_PATH", "")
+
+
+def _find_chrome() -> str:
+    """Locate a Chrome/Chromium binary.
+
+    PRICE_CHROME_PATH wins when set. Otherwise search the usual names: Debian ships `chromium`, the Google build is
+    `google-chrome-stable`, and a Playwright-managed download lands under ~/.cache/ms-playwright. Returning "" lets
+    browser-use fall back to its own detection.
+    """
+    explicit = os.getenv("PRICE_CHROME_PATH", "").strip()
+    if explicit:
+        return explicit
+    for name in ("chromium", "chromium-browser", "google-chrome-stable", "google-chrome", "chrome"):
+        found = shutil.which(name)
+        if found:
+            return found
+    for pattern in ("chromium-*/chrome-linux/chrome", "chromium-*/chrome-linux64/chrome"):
+        for cand in sorted(Path.home().glob(f".cache/ms-playwright/{pattern}"), reverse=True):
+            if cand.is_file() and os.access(cand, os.X_OK):
+                return str(cand)
+    return ""
+
+
+CHROME_PATH = _find_chrome()
 
 SALES = {
     "amazon":   {"name": "Amazon Great Indian Festival", "starts": date.fromisoformat(os.getenv("AMAZON_SALE_START", "2026-10-08"))},
@@ -91,8 +114,27 @@ SALES = {
 
 PRICE_DIR = APP_DIR / "price_agent"
 WORKER_PATH = PRICE_DIR / "price_worker.py"
-_default_worker_py = PRICE_DIR / "env" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-WORKER_PY = Path(os.getenv("PRICE_WORKER_PYTHON", str(_default_worker_py)))
+
+
+def _find_worker_python() -> Path:
+    """Pick the interpreter that runs the browser price worker.
+
+    Two supported layouts:
+      * separate venv  - the Docker image builds one at /opt/price-env because it pins browser-use against a
+        different openai than openai-agents wants. PRICE_WORKER_PYTHON points at it.
+      * single env     - the Hugging Face Gradio Space installs one compatible set (browser-use 0.11.13 +
+        openai-agents 0.17.3 + openai 2.26.0), so the worker runs on this same interpreter.
+    """
+    explicit = os.getenv("PRICE_WORKER_PYTHON", "").strip()
+    if explicit and Path(explicit).exists():
+        return Path(explicit)
+    local_venv = PRICE_DIR / "env" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    if local_venv.exists():
+        return local_venv
+    return Path(sys.executable)
+
+
+WORKER_PY = _find_worker_python()
 RUN_DIR = DATA_DIR / "price_runs"
 RUN_DIR.mkdir(parents=True, exist_ok=True)
 HISTORY_FILE = DATA_DIR / "price_history.jsonl"

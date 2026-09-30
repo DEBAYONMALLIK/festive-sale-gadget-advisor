@@ -15,7 +15,40 @@ from datetime import date
 import gradio as gr
 import pandas as pd
 
-import pipeline as P
+
+def _ensure_display() -> None:
+    """Give Chrome a display before the pipeline is imported.
+
+    The Docker image wraps the process in `xvfb-run`, but a Hugging Face Gradio Space fixes the start command, so
+    there the X server has to be started from here. Marketplaces block headed Chrome noticeably less than headless,
+    so this is worth doing; if Xvfb is unavailable we fall back to headless rather than failing every lookup.
+    """
+    import shutil
+    import subprocess
+
+    if os.environ.get("DISPLAY"):
+        return
+    if os.environ.get("PRICE_HEADLESS") == "1":
+        return
+    if not shutil.which("Xvfb"):
+        os.environ["PRICE_HEADLESS"] = "1"
+        print("[display] Xvfb not found; running Chrome headless", flush=True)
+        return
+    try:
+        subprocess.Popen(
+            ["Xvfb", ":99", "-screen", "0", "1920x1080x24", "-nolisten", "tcp"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        os.environ["DISPLAY"] = ":99"
+        print("[display] Xvfb started on :99", flush=True)
+    except Exception as exc:
+        os.environ["PRICE_HEADLESS"] = "1"
+        print(f"[display] could not start Xvfb ({exc!r}); running Chrome headless", flush=True)
+
+
+_ensure_display()
+
+import pipeline as P  # noqa: E402  - imported after the display is set up
 
 MAX_RUNS_PER_DAY = int(os.getenv("MAX_RUNS_PER_DAY", "40"))          # full research runs (each costs OpenAI tokens)
 MAX_PRICE_CHECKS_PER_DAY = int(os.getenv("MAX_PRICE_CHECKS_PER_DAY", "120"))

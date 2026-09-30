@@ -1,0 +1,9 @@
+chromium
+xvfb
+xauth
+nodejs
+npm
+fonts-liberation
+fonts-noto-color-emoji
+ca-certificates
+procps

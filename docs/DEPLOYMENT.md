@@ -18,8 +18,11 @@ the Space's root commit on every push that touches `app/`.
 
 **One-time setup:**
 
+> Hugging Face gates the **Docker** SDK behind PRO, so this deploys on the free **Gradio** SDK. Costs nothing.
+> See "How this runs on the free Gradio SDK" below for the version constraint that makes it possible.
+
 1. Create an empty Space at <https://huggingface.co/new-space> — owner `linkinmallik`, name
-   `festive-sale-gadget-advisor`, SDK **Docker → Blank**. Do not add any files.
+   `festive-sale-gadget-advisor`, SDK **Gradio → Blank**, hardware **CPU basic**. Do not add any files.
 2. Create a write token at <https://huggingface.co/settings/tokens> (fine-grained, *Write access to contents of your
    Spaces*).
 3. Add it to GitHub as a repository secret named `HF_TOKEN`:
@@ -133,6 +136,43 @@ To do it anyway:
 Note the Dockerfile's `CMD` wraps the app in `xvfb-run`; keep it, or Chrome has no display and every price lookup fails.
 
 Then point `BACKEND_URL` on Vercel and Render at the new service and the front end follows automatically.
+
+## How this runs on the free Gradio SDK
+
+A Gradio Space installs one `requirements.txt` into one environment, and the app's two core libraries disagreed
+about `openai`:
+
+```
+browser-use   0.13.10 -> openai==2.26.0   (exact)      mcp==2.1.1
+openai-agents 0.22.3  -> openai<4,>=3.0.0              mcp<3,>=1.19.0
+```
+
+Rather than keep the Dockerfile's two-venv split, the versions were chosen to intersect. `browser-use 0.11.13` is
+the newest release with *flexible* ranges (`openai<3,>=2.7.2`, `mcp>=1.10.1`) — every 0.12+ release hard-pins both.
+`openai-agents 0.17.3` is the newest still accepting `openai>=2.26.0,<3` and `mcp<2` (0.17.4 raises the floor to
+2.36, 0.21 jumps to openai 3). The overlap:
+
+```
+openai==2.26.0   openai-agents==0.17.3   browser-use==0.11.13   mcp==1.26.0
+```
+
+`pip check` passes on that set, every symbol the code imports resolves, and the app boots and serves `/healthz`.
+**Changing any one of those four requires re-checking the other three** — the constraints are recorded at the top of
+`app/requirements.txt`.
+
+Supporting pieces, all inside `app/`:
+
+| File | Does |
+|---|---|
+| `packages.txt` | apt-installs `chromium`, `xvfb`, `nodejs`, `npm` and fonts |
+| `pipeline.py` | `_find_chrome()` locates Chromium; `_find_worker_python()` uses the current interpreter when no separate venv exists |
+| `app.py` | `_ensure_display()` starts Xvfb before the pipeline imports, falling back to headless |
+
+The Node MCP servers (`tavily-mcp`, `server-memory`) run through `npx`; the Python ones (`yt-mcp-server`,
+`reddit-rss-mcp`) are in `requirements.txt` so `_cmd()` finds them on `PATH`.
+
+`Dockerfile` remains valid for Docker hosts — Render, Cloud Run, or a PRO Docker Space — where the two-venv split is
+used and the newest libraries apply.
 
 ## Why not Vercel for the app
 
