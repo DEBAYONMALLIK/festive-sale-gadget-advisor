@@ -1,26 +1,63 @@
-# Where this stands, and the three things left
+# Where this stands, and how to run it
 
 ## Live now
 
 | | |
 |---|---|
 | **Front end** | https://festive-sale-gadget-advisor.vercel.app |
-| Vercel project | `festive-sale-gadget-advisor` (`prj_jOMaeAW2X320FmKjAazUT4TsB4yj`) |
 
-Verified: the page renders, `/styles.css` and `/app.js` serve correctly, and the `/api/health` function runs.
-Vercel's deployment authentication was **on by default** and has been turned off, so the page is publicly reachable.
+The page is deployed and public. It has a **Connect a backend** box: you run the app on your own machine, paste the
+public URL it prints, and the page remembers it and embeds the app.
 
-Until the backend exists the status pill reads *"backend not deployed yet"* and the page re-probes every 30 seconds.
-It fills in the embedded app on its own once the Space is up — **nothing needs changing on the front end.**
+## Run the app (one command)
 
-## Not yet deployed, and why
+**Windows:**
 
-The session that built this could not reach Hugging Face: `huggingface.co` is blocked by network policy (403 at the
-egress proxy), and the attached Hugging Face connector is read-only — it can list and read repositories but not
-create or upload. Its GitHub credential was also scoped to pre-existing repositories, so it could not create a new
-one. Everything below is therefore set up and committed, but needs you to open two doors.
+```powershell
+powershell -ExecutionPolicy Bypass -File run-local.ps1
+```
 
-## Step 1 — Create the GitHub repository
+**macOS / Linux:**
+
+```bash
+chmod +x run-local.sh && ./run-local.sh
+```
+
+The script checks Python 3.11+, finds Chrome, creates a virtualenv, installs everything, asks for your two API keys
+once (saved to `.env`, never committed), downloads `cloudflared`, starts the app and opens a free Cloudflare tunnel.
+It then prints:
+
+```
+YOUR PUBLIC URL
+   https://something-random.trycloudflare.com
+```
+
+Paste that into **Connect a backend** on the Vercel page. Done — the app is live on the internet.
+
+You need **Python 3.11+**, **Google Chrome**, and **Node.js** (for the Tavily and Memory agents). The script tells
+you if any are missing.
+
+## Why your own machine, and not a cloud host
+
+Not a compromise — it is the better place for this app:
+
+- **Fewer captchas.** Your own README notes that datacenter IPs get challenged by Amazon and Flipkart, and suggests
+  a residential proxy. Running at home *is* a residential IP, so the app's main failure mode mostly disappears.
+- **No cost, no card, no signup.** Cloudflare quick tunnels need no account.
+- **Every free cloud option was worse.** Hugging Face now gates both the Docker SDK *and* CPU-basic hardware behind
+  PRO — the free tier is ZeroGPU only, which is PyTorch GPU inference with a 5-minute daily quota, and this app uses
+  no GPU and runs 8–20 minutes per request. Render's free instance is 0.1 CPU / 512 MB and would be killed the
+  moment Chrome opens. Vercel cannot run it at all.
+
+The trade-off: it is reachable only while your machine is awake and the script is running. The tunnel hostname also
+changes on each restart, which is exactly why the page lets you paste a new one instead of needing a redeploy.
+
+## If you later want it always-on
+
+`Dockerfile` is still in `app/` and still works. `docs/DEPLOYMENT.md` covers Render (needs a 1c-2g instance,
+~$25/mo) and Google Cloud Run (free tier covers roughly 70–80 runs/month, needs a card on file).
+
+## Optional — put the source on GitHub
 
 <https://github.com/new?name=festive-sale-gadget-advisor> — **public**, and leave README, `.gitignore` and licence
 **unchecked** so the first push is clean.
@@ -32,7 +69,9 @@ git remote add origin https://github.com/DEBAYONMALLIK/festive-sale-gadget-advis
 git push -u origin main
 ```
 
-## Step 2 — Create the Space and let the Action fill it
+## Optional — GitHub Actions / Hugging Face
+
+Only relevant if you ever get PRO. Left in place so nothing is lost.
 
 > **This costs nothing.** Hugging Face now gates the *Docker* SDK behind PRO, so the app was reworked to run on the
 > free **Gradio** SDK instead, on free CPU-basic hardware (2 vCPU / 16 GB). See

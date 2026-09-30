@@ -19,13 +19,17 @@ import pandas as pd
 def _ensure_display() -> None:
     """Give Chrome a display before the pipeline is imported.
 
-    The Docker image wraps the process in `xvfb-run`, but a Hugging Face Gradio Space fixes the start command, so
-    there the X server has to be started from here. Marketplaces block headed Chrome noticeably less than headless,
-    so this is worth doing; if Xvfb is unavailable we fall back to headless rather than failing every lookup.
+    Windows and macOS already have one, so there is nothing to do. On a headless Linux host the Docker image wraps
+    the process in `xvfb-run`, but when the start command is fixed by the host the X server has to be started here
+    instead. Marketplaces block headed Chrome noticeably less than headless, so this is worth doing; if Xvfb is
+    unavailable we fall back to headless rather than failing every lookup.
     """
     import shutil
     import subprocess
+    import sys as _sys
 
+    if os.name == "nt" or _sys.platform == "darwin":
+        return                              # a real desktop session is already present
     if os.environ.get("DISPLAY"):
         return
     if os.environ.get("PRICE_HEADLESS") == "1":

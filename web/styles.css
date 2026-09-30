@@ -107,3 +107,21 @@ h2{font-size:clamp(21px,3vw,27px); letter-spacing:-.02em; margin:0 0 8px; font-w
 
 footer{border-top:1px solid var(--border); padding:26px 0 40px; color:var(--muted); font-size:13.5px}
 footer .links{display:flex; gap:16px; flex-wrap:wrap; margin-bottom:10px}
+
+/* ---------- connect-a-backend ---------- */
+.connect{margin-top:14px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+  padding:16px 18px; box-shadow:var(--shadow)}
+.connect-head{display:flex; flex-wrap:wrap; gap:4px 10px; align-items:baseline; margin-bottom:11px}
+.connect-head strong{font-size:14.5px; font-weight:650; letter-spacing:-.01em}
+.connect-head .hint{font-size:13px; color:var(--muted)}
+.connect-head code{font-family:var(--mono); font-size:12px; background:var(--surface-2);
+  border:1px solid var(--border); border-radius:5px; padding:1px 5px}
+.connect-row{display:flex; gap:8px; flex-wrap:wrap}
+.connect-row input{flex:1 1 300px; min-width:0; padding:10px 13px; border-radius:10px;
+  border:1px solid var(--border); background:var(--bg); color:var(--text);
+  font-family:var(--mono); font-size:13.5px}
+.connect-row input:focus{outline:2px solid var(--accent); outline-offset:1px; border-color:transparent}
+.connect-row .btn{padding:10px 17px; font-size:14px}
+.connect-msg{margin-top:9px; font-size:13px; color:var(--muted); min-height:0}
+.connect-msg.err{color:var(--bad)}
+.connect-msg.good{color:var(--ok)}

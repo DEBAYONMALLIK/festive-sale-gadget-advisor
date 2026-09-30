@@ -85,22 +85,45 @@ BUDGET_TOLERANCE = float(os.getenv("BUDGET_TOLERANCE", "1.05"))
 
 
 def _find_chrome() -> str:
-    """Locate a Chrome/Chromium binary.
+    """Locate a Chrome/Chromium binary on Windows, macOS or Linux.
 
-    PRICE_CHROME_PATH wins when set. Otherwise search the usual names: Debian ships `chromium`, the Google build is
-    `google-chrome-stable`, and a Playwright-managed download lands under ~/.cache/ms-playwright. Returning "" lets
-    browser-use fall back to its own detection.
+    PRICE_CHROME_PATH wins when set. Otherwise look on PATH, then in the per-platform install locations, then in a
+    Playwright-managed download. Returning "" lets browser-use fall back to its own detection.
     """
     explicit = os.getenv("PRICE_CHROME_PATH", "").strip()
     if explicit:
         return explicit
+
     for name in ("chromium", "chromium-browser", "google-chrome-stable", "google-chrome", "chrome"):
         found = shutil.which(name)
         if found:
             return found
-    for pattern in ("chromium-*/chrome-linux/chrome", "chromium-*/chrome-linux64/chrome"):
+
+    candidates: list[Path] = []
+    if os.name == "nt":
+        for root in filter(None, (os.getenv("PROGRAMFILES"), os.getenv("PROGRAMFILES(X86)"), os.getenv("LOCALAPPDATA"))):
+            candidates += [
+                Path(root) / "Google/Chrome/Application/chrome.exe",
+                Path(root) / "Chromium/Application/chrome.exe",
+                Path(root) / "Microsoft/Edge/Application/msedge.exe",
+            ]
+    elif sys.platform == "darwin":
+        candidates += [
+            Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+            Path("/Applications/Chromium.app/Contents/MacOS/Chromium"),
+            Path("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+        ]
+    else:
+        candidates += [Path("/usr/bin/chromium"), Path("/usr/bin/chromium-browser"),
+                       Path("/usr/bin/google-chrome-stable"), Path("/snap/bin/chromium")]
+    for cand in candidates:
+        if cand.is_file():
+            return str(cand)
+
+    for pattern in ("chromium-*/chrome-linux/chrome", "chromium-*/chrome-linux64/chrome",
+                    "chromium-*/chrome-win/chrome.exe", "chromium-*/chrome-mac/Chromium.app/Contents/MacOS/Chromium"):
         for cand in sorted(Path.home().glob(f".cache/ms-playwright/{pattern}"), reverse=True):
-            if cand.is_file() and os.access(cand, os.X_OK):
+            if cand.is_file():
                 return str(cand)
     return ""
 

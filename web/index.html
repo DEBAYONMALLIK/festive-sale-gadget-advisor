@@ -88,6 +88,20 @@
       </div>
       <div id="frame-slot"><div class="boot">Loading the backend…</div></div>
     </div>
+
+    <div class="connect" id="connect">
+      <div class="connect-head">
+        <strong>Connect a backend</strong>
+        <span class="hint">Run <code>run-local.ps1</code> on your machine, then paste the <code>trycloudflare.com</code> URL it prints.</span>
+      </div>
+      <form class="connect-row" id="connect-form">
+        <input type="url" id="backend-input" placeholder="https://something-random.trycloudflare.com"
+               spellcheck="false" autocomplete="off" aria-label="Backend URL">
+        <button class="btn primary" type="submit">Connect</button>
+        <button class="btn sec" type="button" id="backend-clear">Forget</button>
+      </form>
+      <div class="connect-msg" id="connect-msg"></div>
+    </div>
   </section>
 
   <section>
