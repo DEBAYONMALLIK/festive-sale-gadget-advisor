@@ -18,25 +18,94 @@ $Port    = if ($env:PORT) { $env:PORT } else { '7860' }
 function Say($msg, $colour = 'Cyan') { Write-Host "`n>> $msg" -ForegroundColor $colour }
 
 # ---------------------------------------------------------------- python ----
-# Exe and args are tracked separately: a "$parts[1..($parts.Length-1)]" slice on a single-token command such as
-# "python" becomes $parts[1..0], which PowerShell evaluates as a *reverse* range and passes bogus arguments.
 Say 'Checking Python'
+
+# Candidates are hashtables, NOT nested arrays: @() flattens nested arrays, so @(@('py','-3.13'), @('python'))
+# collapses into loose strings and $cand[0] then indexes a *string*, yielding its first character.
 $PyExe = $null
 $PyArgs = @()
-foreach ($cand in @(@('py', '-3.13'), @('py', '-3.12'), @('py', '-3.11'), @('python3'), @('python'))) {
-    $exe = $cand[0]
-    $extra = @(); if ($cand.Count -gt 1) { $extra = $cand[1..($cand.Count - 1)] }
-    if (-not (Get-Command $exe -ErrorAction SilentlyContinue)) { continue }
+$found = @()   # interpreters that ran but were too old, for a useful error message
+
+function Get-PyVersion($exe, [string[]]$extra) {
     try {
-        $v = & $exe @extra -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>$null
-        if ($LASTEXITCODE -eq 0 -and $v -and ([version]$v -ge [version]'3.11')) {
-            $PyExe = $exe; $PyArgs = $extra; break
-        }
+        $out = & $exe @extra -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>$null
+        if ($LASTEXITCODE -eq 0 -and $out -match '^\d+\.\d+$') { return "$out".Trim() }
     } catch { }
+    return $null
 }
+
+# Explicit override wins, for an install in an unusual place.
+if ($env:PYTHON_EXE) {
+    if (-not (Test-Path $env:PYTHON_EXE)) {
+        Write-Host "PYTHON_EXE is set to '$env:PYTHON_EXE' but that file does not exist." -ForegroundColor Red
+        exit 1
+    }
+    $v = Get-PyVersion $env:PYTHON_EXE @()
+    if (-not $v) { Write-Host "PYTHON_EXE did not run as a Python interpreter." -ForegroundColor Red; exit 1 }
+    if ([version]$v -lt [version]'3.11') { Write-Host "PYTHON_EXE is Python $v; 3.11+ is required." -ForegroundColor Red; exit 1 }
+    $PyExe = $env:PYTHON_EXE
+}
+
+$attempts = @(
+    @{ exe = 'py';      flags = @('-3.13') },
+    @{ exe = 'py';      flags = @('-3.12') },
+    @{ exe = 'py';      flags = @('-3.11') },
+    @{ exe = 'py';      flags = @('-3')    },
+    @{ exe = 'python';  flags = @()        },
+    @{ exe = 'python3'; flags = @()        }
+)
+foreach ($a in $attempts) {
+    if ($PyExe) { break }
+    if (-not (Get-Command $a.exe -ErrorAction SilentlyContinue)) { continue }
+    $v = Get-PyVersion $a.exe $a.flags
+    if (-not $v) { continue }                       # Microsoft Store stub, or launcher without that version
+    if ([version]$v -ge [version]'3.11') { $PyExe = $a.exe; $PyArgs = $a.flags; break }
+    $found += "$($a.exe) $($a.flags -join ' ') -> $v"
+}
+
+# Not on PATH? Plenty of Windows installs skip the "Add python.exe to PATH" tickbox, so look where it lands.
 if (-not $PyExe) {
-    Write-Host "Python 3.11 or newer is required (browser-use needs it)." -ForegroundColor Red
-    Write-Host "Install it from https://www.python.org/downloads/ and tick 'Add python.exe to PATH'." -ForegroundColor Red
+    # Scan parent folders for PythonNNN subdirectories. Deliberately avoids wildcards in -Path and the -Directory
+    # dynamic parameter: if a root does not resolve, binding can fail, and $ErrorActionPreference='Stop' would then
+    # abort the whole script instead of just skipping that folder.
+    $parents = @(
+        "$env:LOCALAPPDATA\Programs\Python",
+        "$env:PROGRAMFILES",
+        "${env:PROGRAMFILES(X86)}",
+        "$env:USERPROFILE\AppData\Local\Programs\Python",
+        'C:\'
+    )
+    $exes = New-Object System.Collections.Generic.List[string]
+    foreach ($p in $parents) {
+        if (-not $p) { continue }
+        try {
+            if (-not (Test-Path -LiteralPath $p)) { continue }
+            Get-ChildItem -LiteralPath $p -Force -ErrorAction SilentlyContinue |
+                Where-Object { $_.PSIsContainer -and $_.Name -like 'Python3*' } |
+                ForEach-Object { $exes.Add((Join-Path $_.FullName 'python.exe')) }
+        } catch { }
+    }
+    foreach ($e in ($exes | Select-Object -Unique | Sort-Object -Descending)) {
+        if (-not (Test-Path -LiteralPath $e)) { continue }
+        $v = Get-PyVersion $e @()
+        if ($v -and [version]$v -ge [version]'3.11') { $PyExe = $e; $PyArgs = @(); break }
+        if ($v) { $found += "$e -> $v" }
+    }
+}
+
+if (-not $PyExe) {
+    Write-Host ''
+    Write-Host 'Could not find Python 3.11 or newer (browser-use requires it).' -ForegroundColor Red
+    if ($found.Count) {
+        Write-Host 'Found these, but they are too old:' -ForegroundColor Yellow
+        $found | ForEach-Object { Write-Host "   $_" -ForegroundColor Yellow }
+    } else {
+        Write-Host 'No working Python was found on PATH or in the usual install folders.' -ForegroundColor Yellow
+    }
+    Write-Host ''
+    Write-Host 'Install it from https://www.python.org/downloads/ and TICK "Add python.exe to PATH".' -ForegroundColor Red
+    Write-Host 'Already installed somewhere unusual? Point this script at it:' -ForegroundColor Red
+    Write-Host '   $env:PYTHON_EXE = "C:\path\to\python.exe"; powershell -ExecutionPolicy Bypass -File run-local.ps1' -ForegroundColor White
     exit 1
 }
 Write-Host "   using: $PyExe $($PyArgs -join ' ')"
@@ -87,7 +156,7 @@ if (-not (Test-Path $EnvFile)) {
 }
 Get-Content $EnvFile | ForEach-Object {
     if ($_ -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$') {
-        [Environment]::SetEnvironmentVariable($matches[1], $matches[2].Trim('"').Trim("'"))
+        [Environment]::SetEnvironmentVariable($matches[1], $matches[2].Trim().Trim('"').Trim("'"))
     }
 }
 
