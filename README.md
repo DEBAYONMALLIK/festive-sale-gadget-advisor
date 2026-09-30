@@ -4,11 +4,14 @@ A multi-agent shopping researcher for the Indian festive sales. Describe what yo
 AI agents reads Reddit owner threads and YouTube reviews, shortlists real models, then drives **real Google Chrome**
 through Amazon.in and Flipkart to read the lowest in-stock price for every variant.
 
-| | |
-|---|---|
-| **Live app** | https://linkinmallik-festive-sale-gadget-advisor.hf.space |
-| **Front end** | see `web/` — deployed on Vercel |
-| **Status** | see `status-service/` — deployed on Render |
+| | | |
+|---|---|---|
+| **Front end** | https://festive-sale-gadget-advisor.vercel.app | ✅ live |
+| **App** | https://linkinmallik-festive-sale-gadget-advisor.hf.space | ⏳ needs the Space created — see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
+| **Status probe** | `status-service/` on Render | ⏳ needs this repo pushed |
+
+The front end is live now and degrades honestly: until the Space exists it shows "backend not deployed yet" and
+re-probes every 30 seconds, then fills in the embedded app by itself. Nothing to change here when the backend lands.
 
 ## Why the pieces live where they do
 

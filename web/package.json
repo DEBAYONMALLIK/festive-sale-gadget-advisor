@@ -3,8 +3,5 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Vercel front end for the Festive Sale Gadget Advisor: landing page plus a server-side health probe for the backend Space.",
-  "engines": {
-    "node": ">=22"
-  }
+  "engines": { "node": ">=22" }
 }
