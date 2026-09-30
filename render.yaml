@@ -1,0 +1,30 @@
+# Render Blueprint — the uptime probe for the backend.
+#
+# Only the status probe lives on Render. The app itself does not: it drives headed Google Chrome under Xvfb,
+# which needs roughly 2 GB of RAM, while Render's free instance type provides 0.1 CPU / 512 MB. To move the
+# app here, change this to a `docker` service with `rootDir: app`, pick an instance of 1c-2g or larger, and
+# attach a disk at /data (see docs/DEPLOYMENT.md).
+
+services:
+  - type: web
+    name: gadget-advisor-status
+    runtime: node
+    plan: free
+    region: oregon
+    rootDir: status-service
+    branch: main
+    buildCommand: "echo 'no dependencies to install'"
+    startCommand: node server.js
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: BACKEND_URL
+        value: https://linkinmallik-festive-sale-gadget-advisor.hf.space
+      - key: HF_SPACE_ID
+        value: linkinmallik/festive-sale-gadget-advisor
+      - key: REPO_URL
+        value: https://github.com/DEBAYONMALLIK/festive-sale-gadget-advisor
+      - key: PROBE_INTERVAL_MS
+        value: "300000"
+      - key: FRONTEND_URL
+        sync: false # set once the Vercel domain is known

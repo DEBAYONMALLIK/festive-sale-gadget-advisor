@@ -1,0 +1,14 @@
+{
+  "name": "festive-sale-gadget-advisor-status",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Dependency-free uptime probe for the Festive Sale Gadget Advisor backend.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -1,0 +1,81 @@
+name: Mirror app/ to Hugging Face Space
+
+# The Space's git root must be the contents of app/ (Hugging Face requires Dockerfile and the README card at the
+# top level), so this publishes the app/ subtree as the Space's root commit rather than pushing the whole repo.
+#
+# Setup, once:
+#   1. Create an empty Docker Space:  https://huggingface.co/new-space
+#        Owner: linkinmallik   Name: festive-sale-gadget-advisor   SDK: Docker -> Blank
+#   2. Add a write token as a repo secret named HF_TOKEN:
+#        token:  https://huggingface.co/settings/tokens  (fine-grained, "Write access to contents of your Spaces")
+#        secret: Settings -> Secrets and variables -> Actions -> New repository secret
+#   3. Add the app's own secrets in the Space UI (Settings -> Variables and secrets), NOT here:
+#        OPENAI_API_KEY, TAVILY_API_KEY
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - '.github/workflows/sync-hf-space.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: hf-space-sync
+  cancel-in-progress: false
+
+env:
+  SPACE_ID: linkinmallik/festive-sale-gadget-advisor
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v5
+
+      - name: Fail early if the token is missing
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::error::HF_TOKEN repository secret is not set. See the header of this workflow for setup."
+            exit 1
+          fi
+
+      - name: Publish app/ as the Space root
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # Refuse to publish if a secret file somehow slipped into app/.
+          if git ls-files app/ | grep -Eq '(^|/)\.env$'; then
+            echo "::error::app/ contains a .env file. Remove it before publishing."
+            exit 1
+          fi
+
+          cd app
+          rm -rf .git
+          git init -q -b main
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Sync from ${GITHUB_REPOSITORY}@${GITHUB_SHA::7}"
+
+          # A Space's history is disposable; the repo is the source of truth, so force-push a single clean commit.
+          git push -q --force \
+            "https://oauth:${HF_TOKEN}@huggingface.co/spaces/${SPACE_ID}" main:main
+
+          echo "Pushed to https://huggingface.co/spaces/${SPACE_ID}"
+
+      - name: Summary
+        run: |
+          {
+            echo "### Space updated"
+            echo ""
+            echo "- Space: https://huggingface.co/spaces/${SPACE_ID}"
+            echo "- App:   https://${SPACE_ID/\//-}.hf.space"
+            echo ""
+            echo "The Docker build takes 15-25 minutes on a cold cache. Watch it under the Space's **Logs -> Build** tab."
+          } >> "$GITHUB_STEP_SUMMARY"

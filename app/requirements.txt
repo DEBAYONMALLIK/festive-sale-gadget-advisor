@@ -1,0 +1,9 @@
+openai-agents==0.22.3
+openai==3.22.1
+mcp==2.2.0
+langgraph==1.2.12
+pydantic==2.13.5
+pandas==3.0.6
+python-dotenv==1.2.3
+gradio==6.29.0
+tabulate

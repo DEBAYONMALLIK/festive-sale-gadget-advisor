@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Festive Sale Gadget Advisor</title>
+<meta name="description" content="AI agents read Reddit owner threads and YouTube reviews, then open Amazon.in and Flipkart in a real browser to find the lowest in-stock price on phones, laptops and tablets.">
+<meta property="og:title" content="Festive Sale Gadget Advisor">
+<meta property="og:description" content="A team of AI agents does the research a careful buyer would do before the Big Billion Days — with live Amazon.in and Flipkart prices.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛍️</text></svg>">
+<style>
+  :root{
+    --bg:#fbfaf8; --surface:#fff; --surface-2:#f4f2ee; --border:#e5e1d8;
+    --text:#1a1814; --muted:#6b6459; --accent:#b4451f; --accent-soft:#fdf0e9;
+    --ok:#1f7a4d; --ok-soft:#e8f5ee; --warn:#8a6100; --warn-soft:#fdf4e0; --bad:#a32218; --bad-soft:#fdeceb;
+    --radius:14px; --shadow:0 1px 2px rgba(26,24,20,.05),0 8px 24px -12px rgba(26,24,20,.12);
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  :root:not([data-theme="light"]){ @media (prefers-color-scheme:dark){
+    --bg:#15140f; --surface:#1e1c17; --surface-2:#262320; --border:#37332c;
+    --text:#f2efe8; --muted:#a39b8d; --accent:#ef8354; --accent-soft:#2c1f17;
+    --ok:#5fd19a; --ok-soft:#14261d; --warn:#e3b341; --warn-soft:#2a2214; --bad:#f08a80; --bad-soft:#2d1917;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px -12px rgba(0,0,0,.5);
+  }}
+  :root[data-theme="dark"]{
+    --bg:#15140f; --surface:#1e1c17; --surface-2:#262320; --border:#37332c;
+    --text:#f2efe8; --muted:#a39b8d; --accent:#ef8354; --accent-soft:#2c1f17;
+    --ok:#5fd19a; --ok-soft:#14261d; --warn:#e3b341; --warn-soft:#2a2214; --bad:#f08a80; --bad-soft:#2d1917;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px -12px rgba(0,0,0,.5);
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font:16px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1060px; margin:0 auto; padding:0 16px}
+  a{color:var(--accent); text-decoration-thickness:1px; text-underline-offset:2px}
+
+  /* ---------- header ---------- */
+  header{position:sticky; top:0; z-index:20; background:color-mix(in srgb,var(--bg) 88%,transparent);
+    backdrop-filter:blur(10px); border-bottom:1px solid var(--border)}
+  .bar{display:flex; align-items:center; gap:12px; padding:12px 0; flex-wrap:wrap}
+  .brand{display:flex; align-items:center; gap:9px; font-weight:650; letter-spacing:-.01em; margin-right:auto}
+  .brand .logo{font-size:20px; line-height:1}
+  .pill{display:inline-flex; align-items:center; gap:7px; padding:5px 11px; border-radius:999px;
+    font-size:12.5px; font-weight:600; border:1px solid var(--border); background:var(--surface-2); color:var(--muted)}
+  .pill .dot{width:7px; height:7px; border-radius:50%; background:currentColor; flex:none}
+  .pill.ok{color:var(--ok); background:var(--ok-soft); border-color:color-mix(in srgb,var(--ok) 28%,transparent)}
+  .pill.warn{color:var(--warn); background:var(--warn-soft); border-color:color-mix(in srgb,var(--warn) 30%,transparent)}
+  .pill.bad{color:var(--bad); background:var(--bad-soft); border-color:color-mix(in srgb,var(--bad) 28%,transparent)}
+  .pill.live .dot{animation:pulse 2s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  @media (prefers-reduced-motion:reduce){.pill.live .dot{animation:none}}
+  .ghost{padding:6px 12px; border-radius:9px; border:1px solid var(--border); background:var(--surface);
+    color:var(--text); font-size:13.5px; font-weight:550; cursor:pointer; text-decoration:none; line-height:1.5}
+  .ghost:hover{background:var(--surface-2)}
+
+  /* ---------- hero ---------- */
+  .hero{padding:52px 0 36px}
+  h1{font-size:clamp(30px,5.2vw,46px); line-height:1.1; letter-spacing:-.025em; margin:0 0 16px; font-weight:700}
+  h1 .em{color:var(--accent)}
+  .lede{font-size:clamp(16.5px,2vw,19px); color:var(--muted); max-width:62ch; margin:0 0 26px}
+  .cta{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+  .btn{display:inline-flex; align-items:center; gap:8px; padding:11px 19px; border-radius:11px; font-weight:600;
+    font-size:15px; text-decoration:none; border:1px solid transparent; cursor:pointer}
+  .btn.primary{background:var(--accent); color:#fff}
+  .btn.primary:hover{filter:brightness(1.07)}
+  .btn.sec{background:var(--surface); color:var(--text); border-color:var(--border)}
+  .btn.sec:hover{background:var(--surface-2)}
+
+  /* ---------- sale strip ---------- */
+  .sales{display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:12px; margin:8px 0 0}
+  .sale{background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:15px 17px;
+    box-shadow:var(--shadow)}
+  .sale .lbl{font-size:12px; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); font-weight:650}
+  .sale .val{font-size:17px; font-weight:650; margin-top:5px; letter-spacing:-.01em}
+  .sale .sub{font-size:13.5px; color:var(--muted); margin-top:2px}
+
+  /* ---------- sections ---------- */
+  section{padding:44px 0; border-top:1px solid var(--border)}
+  section:first-of-type{border-top:0}
+  h2{font-size:clamp(21px,3vw,27px); letter-spacing:-.02em; margin:0 0 8px; font-weight:670}
+  .sub-h{color:var(--muted); margin:0 0 26px; max-width:66ch}
+
+  /* ---------- pipeline ---------- */
+  .steps{display:grid; grid-template-columns:repeat(auto-fit,minmax(248px,1fr)); gap:12px; counter-reset:s}
+  .step{position:relative; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+    padding:17px 17px 17px 52px; box-shadow:var(--shadow)}
+  .step::before{counter-increment:s; content:counter(s); position:absolute; left:15px; top:16px;
+    width:26px; height:26px; border-radius:8px; background:var(--accent-soft); color:var(--accent);
+    display:grid; place-items:center; font-size:13px; font-weight:700; font-family:var(--mono)}
+  .step h3{margin:0 0 5px; font-size:15px; font-weight:650; letter-spacing:-.01em}
+  .step p{margin:0; font-size:13.8px; color:var(--muted); line-height:1.55}
+  .step .tag{display:inline-block; margin-top:8px; font-family:var(--mono); font-size:11px; color:var(--muted);
+    background:var(--surface-2); border:1px solid var(--border); border-radius:6px; padding:2px 7px}
+
+  /* ---------- app embed ---------- */
+  .frame{position:relative; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden;
+    background:var(--surface); box-shadow:var(--shadow)}
+  .frame .chrome{display:flex; align-items:center; gap:8px; padding:9px 13px; border-bottom:1px solid var(--border);
+    background:var(--surface-2); font-size:12.5px; color:var(--muted); font-family:var(--mono)}
+  .frame .chrome .dots{display:flex; gap:5px}
+  .frame .chrome .dots i{width:9px; height:9px; border-radius:50%; background:var(--border)}
+  .frame iframe{display:block; width:100%; height:min(88vh,1000px); border:0; background:var(--surface)}
+  .frame .openout{margin-left:auto}
+  .boot{padding:44px 20px; text-align:center; color:var(--muted); font-size:14.5px}
+
+  /* ---------- notes ---------- */
+  .notes{display:grid; grid-template-columns:repeat(auto-fit,minmax(255px,1fr)); gap:12px}
+  .note{background:var(--surface-2); border:1px solid var(--border); border-left:3px solid var(--accent);
+    border-radius:10px; padding:14px 16px}
+  .note h3{margin:0 0 5px; font-size:14px; font-weight:650}
+  .note p{margin:0; font-size:13.5px; color:var(--muted); line-height:1.55}
+
+  /* ---------- stack table ---------- */
+  .stack{width:100%; border-collapse:collapse; font-size:14px}
+  .stack th,.stack td{text-align:left; padding:11px 13px; border-bottom:1px solid var(--border); vertical-align:top}
+  .stack th{font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); font-weight:650}
+  .stack td:first-child{font-weight:600; white-space:nowrap}
+  .stack code{font-family:var(--mono); font-size:12.5px; background:var(--surface-2); padding:1.5px 5px;
+    border-radius:5px; border:1px solid var(--border)}
+  .scroll{overflow-x:auto; -webkit-overflow-scrolling:touch}
+
+  footer{border-top:1px solid var(--border); padding:26px 0 40px; color:var(--muted); font-size:13.5px}
+  footer .links{display:flex; gap:16px; flex-wrap:wrap; margin-bottom:10px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap bar">
+    <div class="brand"><span class="logo">🛍️</span> Festive Sale Gadget Advisor</div>
+    <span class="pill" id="status"><span class="dot"></span><span id="status-text">checking backend…</span></span>
+    <button class="ghost" id="theme-toggle" type="button" aria-label="Toggle colour theme">◑</button>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <div class="hero">
+    <h1>Agents that actually <span class="em">open the shop</span> before telling you what to buy.</h1>
+    <p class="lede">
+      Describe the phone, laptop or tablet you want in plain words. A team of AI agents reads Reddit owner threads
+      and YouTube reviews, shortlists real models, then drives a <strong>real Chrome browser</strong> through
+      Amazon.in and Flipkart to read the lowest in-stock price for every variant — and drops anything over budget
+      or out of stock.
+    </p>
+    <div class="cta">
+      <a class="btn primary" href="#app">Try it now ↓</a>
+      <a class="btn sec" id="open-direct" href="#" target="_blank" rel="noopener">Open full app ↗</a>
+      <a class="btn sec" id="repo-link" href="#" target="_blank" rel="noopener">Source on GitHub ↗</a>
+    </div>
+    <div class="sales" id="sales" hidden>
+      <div class="sale">
+        <div class="lbl">Amazon</div>
+        <div class="val" id="amz-val">—</div>
+        <div class="sub">Great Indian Festival</div>
+      </div>
+      <div class="sale">
+        <div class="lbl">Flipkart</div>
+        <div class="val" id="fk-val">—</div>
+        <div class="sub">Big Billion Days</div>
+      </div>
+      <div class="sale">
+        <div class="lbl">Today's capacity</div>
+        <div class="val" id="cap-val">—</div>
+        <div class="sub" id="cap-sub">research runs and price checks left</div>
+      </div>
+    </div>
+  </div>
+
+  <section>
+    <h2>How a single answer gets built</h2>
+    <p class="sub-h">
+      A LangGraph state machine over the OpenAI Agents SDK. Scouts and deep dives fan out in parallel; scoring and
+      price arithmetic are plain Python, so the numbers are never hallucinated.
+    </p>
+    <div class="steps">
+      <div class="step"><h3>Intent parser</h3><p>Turns your sentence into a budget and weighted priorities — camera, battery, thermals, brand exclusions.</p><span class="tag">gpt-5-mini</span></div>
+      <div class="step"><h3>Reddit + web scouts</h3><p>Run in parallel to collect candidate models from owner threads and buying guides.</p><span class="tag">MCP · reddit-rss + Tavily</span></div>
+      <div class="step"><h3>Candidate filter</h3><p>Verifies specs and rough prices, then builds a shortlist of six.</p><span class="tag">gpt-5-mini</span></div>
+      <div class="step"><h3>Live prices</h3><p>browser-use agents open Amazon.in and Flipkart in headed Chrome, read every variant, and plain Python keeps the lowest in-stock one.</p><span class="tag">Chrome + Xvfb</span></div>
+      <div class="step"><h3>Memory check</h3><p>Reuses recent research from a knowledge-graph cache so repeat questions skip the expensive work.</p><span class="tag">MCP · server-memory</span></div>
+      <div class="step"><h3>Deep dives</h3><p>One task per model per source across Reddit and YouTube, again in parallel.</p><span class="tag">MCP · yt-mcp-server</span></div>
+      <div class="step"><h3>Scorer</h3><p>Ranks finalists against your weights. Deterministic Python — no model touches the maths.</p><span class="tag">pure python</span></div>
+      <div class="step"><h3>Reviewer → writer</h3><p>A reviewer sends agents back to fill gaps (max two loops), then the writer produces the answer with sources, a comparison table and where to buy.</p><span class="tag">gpt-5</span></div>
+    </div>
+  </section>
+
+  <section id="app">
+    <h2>Run it</h2>
+    <p class="sub-h">
+      The full app, embedded live. A complete research run takes <strong>8–20 minutes</strong> — live prices and
+      Reddit rate limits are the slow parts — and streams the agent log as it goes. In a hurry? The
+      <strong>Quick price check</strong> tab runs only the browser agents for one product, in 1–5 minutes.
+    </p>
+    <div class="frame">
+      <div class="chrome">
+        <span class="dots"><i></i><i></i><i></i></span>
+        <span id="frame-url">backend</span>
+        <a class="openout ghost" id="open-direct-2" href="#" target="_blank" rel="noopener">open ↗</a>
+      </div>
+      <div id="frame-slot"><div class="boot">Loading the backend…</div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Where each piece runs</h2>
+    <p class="sub-h">One repository, three hosts, each doing the job it is actually good at.</p>
+    <div class="scroll">
+      <table class="stack">
+        <thead><tr><th>Layer</th><th>Host</th><th>Why there</th></tr></thead>
+        <tbody>
+          <tr><td>This page</td><td>Vercel</td><td>Static edge delivery plus one serverless function that health-checks the backend server-side, so the browser never hits a CORS wall.</td></tr>
+          <tr><td>The app</td><td>Hugging Face Space</td><td>Docker with 16 GB RAM on the free CPU tier. Headed Chrome under Xvfb plus Gradio and LangGraph needs roughly 2 GB — far past the 512 MB a free Render or Vercel function gets.</td></tr>
+          <tr><td>Status service</td><td>Render</td><td>Always-on <code>/status</code> probe and uptime history, independent of the app itself, so an outage is still reportable.</td></tr>
+          <tr><td>Source</td><td>GitHub</td><td>Single source of truth. A push to <code>main</code> redeploys the frontend, and the app mirrors to the Space.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Read this before you trust a number</h2>
+    <div class="notes">
+      <div class="note"><h3>Prices move</h3><p>Everything is read live from public product pages and can change the moment a sale wave starts. Always confirm on the listing before you pay.</p></div>
+      <div class="note"><h3>Bank offers excluded</h3><p>Card and bank discounts are listed separately and are never folded into the headline price, because eligibility varies per shopper.</p></div>
+      <div class="note"><h3>Captchas happen</h3><p>Marketplaces challenge shared datacenter IPs. When a lookup is blocked the answer says the price is unverified rather than guessing one.</p></div>
+      <div class="note"><h3>Every claim is cited</h3><p>Recommendations link the Reddit threads and YouTube reviews they came from, so you can check the reasoning yourself.</p></div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="wrap">
+  <div class="links">
+    <a id="footer-repo" href="#" target="_blank" rel="noopener">GitHub</a>
+    <a id="footer-space" href="#" target="_blank" rel="noopener">Hugging Face Space</a>
+    <a href="/api/health" target="_blank" rel="noopener">Health JSON</a>
+  </div>
+  <div>Not affiliated with Amazon or Flipkart. Prices are read from public pages for personal research.</div>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---- theme ----
+  var root = document.documentElement, KEY = "fsga-theme";
+  try { var saved = localStorage.getItem(KEY); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  document.getElementById("theme-toggle").addEventListener("click", function(){
+    var dark = getComputedStyle(root).getPropertyValue("--bg").trim().indexOf("#15") === 0;
+    var next = dark ? "light" : "dark";
+    root.setAttribute("data-theme", next);
+    try { localStorage.setItem(KEY, next); } catch (e) {}
+  });
+
+  // ---- config injected at build time, with a safe fallback ----
+  var CFG = window.__FSGA__ || {};
+  var backend = CFG.backend || "";
+  var repo = CFG.repo || "";
+
+  function setLinks(){
+    ["open-direct","open-direct-2"].forEach(function(id){
+      var el = document.getElementById(id); if (el && backend) el.href = backend;
+    });
+    var fs = document.getElementById("footer-space"); if (fs && backend) fs.href = backend;
+    ["repo-link","footer-repo"].forEach(function(id){
+      var el = document.getElementById(id); if (el && repo) el.href = repo;
+    });
+    var fu = document.getElementById("frame-url");
+    if (fu && backend) fu.textContent = backend.replace(/^https?:\/\//, "");
+  }
+
+  function pill(kind, text, live){
+    var p = document.getElementById("status");
+    p.className = "pill " + kind + (live ? " live" : "");
+    document.getElementById("status-text").textContent = text;
+  }
+
+  function mountFrame(){
+    if (!backend) return;
+    var slot = document.getElementById("frame-slot");
+    var f = document.createElement("iframe");
+    f.src = backend;
+    f.title = "Festive Sale Gadget Advisor application";
+    f.loading = "lazy";
+    f.allow = "clipboard-write";
+    f.referrerPolicy = "no-referrer-when-downgrade";
+    slot.innerHTML = "";
+    slot.appendChild(f);
+  }
+
+  function renderSales(h){
+    if (!h || !h.sale_status) return;
+    // sale_status looks like: "Amazon Great Indian Festival starts 08 Oct (in 8 days); Flipkart Big Billion Days starts 09 Oct (in 9 days)"
+    var parts = String(h.sale_status).split(";");
+    var amz = (parts[0] || "").replace(/^\s*Amazon[^s]*?\s*/, "").trim();
+    var fk  = (parts[1] || "").replace(/^\s*Flipkart[^s]*?\s*/, "").trim();
+    function tidy(s, name){
+      s = s.replace(name, "").trim();
+      s = s.replace(/^(Great Indian Festival|Big Billion Days)\s*/, "").trim();
+      return s || "—";
+    }
+    document.getElementById("amz-val").textContent = tidy(amz, "Amazon") || "—";
+    document.getElementById("fk-val").textContent  = tidy(fk, "Flipkart") || "—";
+
+    if (h.limits && h.usage_today){
+      var runsLeft = Math.max(0, (h.limits.runs_per_day || 0) - (h.usage_today.runs || 0));
+      var chkLeft  = Math.max(0, (h.limits.price_checks_per_day || 0) - (h.usage_today.checks || 0));
+      document.getElementById("cap-val").textContent = runsLeft + " runs · " + chkLeft + " checks";
+    }
+    document.getElementById("sales").hidden = false;
+  }
+
+  function probe(){
+    fetch("/api/health", { cache: "no-store" })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d && d.backend) { backend = d.backend; setLinks(); }
+        if (d && d.repo) { repo = d.repo; setLinks(); }
+
+        if (d && d.reachable && d.configured) {
+          pill("ok", "backend live", true);
+          renderSales(d.health);
+          mountFrame();
+        } else if (d && d.reachable && !d.configured) {
+          var miss = (d.health && d.health.missing_secrets || []).join(", ");
+          pill("warn", miss ? "backend up · missing " + miss : "backend up · not configured", false);
+          renderSales(d.health);
+          mountFrame();
+        } else if (d && d.sleeping) {
+          pill("warn", "backend waking up…", true);
+          document.getElementById("frame-slot").innerHTML =
+            '<div class="boot">The Space is asleep and is starting now. This takes a minute or two on a cold start — ' +
+            'the page will pick it up automatically.</div>';
+          setTimeout(probe, 15000);
+        } else {
+          pill("bad", "backend unreachable", false);
+          document.getElementById("frame-slot").innerHTML =
+            '<div class="boot">The backend is not responding right now. ' +
+            (backend ? 'You can try <a href="' + backend + '" target="_blank" rel="noopener">opening it directly ↗</a>.' : '') +
+            '</div>';
+          setTimeout(probe, 30000);
+        }
+      })
+      .catch(function(){
+        pill("bad", "status check failed", false);
+        mountFrame(); // still give people the app even if the probe itself broke
+      });
+  }
+
+  setLinks();
+  probe();
+})();
+</script>
+</body>
+</html>

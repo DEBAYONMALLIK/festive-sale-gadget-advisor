@@ -1,0 +1,22 @@
+# Keep the image small and never bake secrets or local virtualenvs into it.
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.git/
+.gitignore
+.ipynb_checkpoints/
+
+# Runtime output — the container writes its own under /data.
+data/
+price_runs/
+price_agent/*.json
+price_history.jsonl
+
+# Docs and notebooks are not needed at runtime.
+*.ipynb
+docs/

@@ -1,0 +1,39 @@
+# --- secrets: never commit ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# --- runtime data written by the app ---
+app/data/
+app/price_agent/*.json
+!app/price_agent/price_worker.py
+app/price_runs/
+price_history.jsonl
+product_memory.jsonl
+!app/seed/product_memory.jsonl
+
+# --- node / vercel ---
+node_modules/
+.vercel/
+.next/
+dist/
+
+# --- os / editor ---
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
