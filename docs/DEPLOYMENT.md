@@ -13,20 +13,29 @@ GitHub  DEBAYONMALLIK/festive-sale-gadget-advisor
 ## 1. The application — Hugging Face Space
 
 The Space's git root is the contents of `app/`, not the repo root, because Hugging Face requires `Dockerfile` and the
-README card at the top level.
+README card at the top level. `.github/workflows/sync-hf-space.yml` handles that: it publishes the `app/` subtree as
+the Space's root commit on every push that touches `app/`.
 
-```bash
-git clone https://github.com/DEBAYONMALLIK/festive-sale-gadget-advisor.git
-cd festive-sale-gadget-advisor
+**One-time setup:**
 
-# push the app/ subtree to the Space
-git subtree push --prefix=app space main
-```
+1. Create an empty Space at <https://huggingface.co/new-space> — owner `linkinmallik`, name
+   `festive-sale-gadget-advisor`, SDK **Docker → Blank**. Do not add any files.
+2. Create a write token at <https://huggingface.co/settings/tokens> (fine-grained, *Write access to contents of your
+   Spaces*).
+3. Add it to GitHub as a repository secret named `HF_TOKEN`:
+   *Settings → Secrets and variables → Actions → New repository secret*.
 
-First time, add the remote (a write token from <https://huggingface.co/settings/tokens>):
+After that, every push to `app/` redeploys the Space. To deploy without a code change, run the workflow manually from
+the Actions tab (*Mirror app/ to Hugging Face Space → Run workflow*).
+
+The workflow refuses to publish if a `.env` has slipped into `app/`, and force-pushes a single clean commit — the
+Space's history is disposable because this repo is the source of truth.
+
+**Manual fallback**, if you would rather not use the Action:
 
 ```bash
 git remote add space https://USER:HF_TOKEN@huggingface.co/spaces/linkinmallik/festive-sale-gadget-advisor
+git subtree push --prefix=app space main
 ```
 
 Then in **Space settings → Variables and secrets**, add as *secrets*:
