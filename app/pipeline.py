@@ -188,11 +188,35 @@ from openai.types.shared import Reasoning  # noqa: E402
 
 
 # ============================================================== MCP SERVERS =========================================
+def _which(name: str) -> str:
+    """Find an executable on PATH, or failing that next to this interpreter.
+
+    The app is usually started as <venv>/Scripts/python.exe app.py without activating the virtualenv, so the venv's
+    script directory is not on PATH and console scripts installed into it - notably `uvx` - would be invisible to a
+    plain shutil.which().
+    """
+    found = shutil.which(name)
+    if found:
+        return found
+    bindir = Path(sys.executable).parent
+    for suffix in ("", ".exe", ".cmd", ".bat"):
+        cand = bindir / f"{name}{suffix}"
+        if cand.is_file():
+            return str(cand)
+    return ""
+
+
 def _cmd(binary: str, fallback: list[str]) -> dict:
-    # Use the pre-installed binary when it exists (Docker image); otherwise fall back to uvx/npx like the notebook.
-    if shutil.which(binary):
-        return {"command": binary, "args": []}
-    return {"command": fallback[0], "args": fallback[1:]}
+    """Prefer a pre-installed server binary; otherwise launch it through uvx/npx.
+
+    The YouTube and Reddit servers are intentionally not installed into this environment: both require mcp>=2,
+    while openai-agents needs mcp<2. uvx resolves them in isolated environments where that no longer collides.
+    """
+    direct = _which(binary)
+    if direct:
+        return {"command": direct, "args": []}
+    launcher = _which(fallback[0]) or fallback[0]
+    return {"command": launcher, "args": fallback[1:]}
 
 
 def server_specs() -> dict:
@@ -1039,7 +1063,11 @@ async def reviewer(state: RecState, config) -> dict:
 # ============================================================== MEMORY WRITE + WRITER ===============================
 WRITER_INSTRUCTIONS = '''You write the final recommendation for the shopper, in Markdown.
 1. Top pick and 1-2 runners-up (max 3, ranked by the score table). For each: a one-line verdict, pros and cons tied
-   to the shopper's priorities, and 2-4 source links (Reddit threads / YouTube videos) inline.
+   to the shopper's priorities, and 2-4 sources.
+   SOURCES MUST BE CLICKABLE MARKDOWN LINKS, copied verbatim from the URLs in the Evidence block:
+       Sources: [owner thermals thread](https://reddit.com/r/...) · [Trakin Tech review](https://youtube.com/watch?v=...)
+   Never write a source as plain text like "Trakin Tech review | YouTube" - a source without a real URL from the
+   Evidence block is useless to the shopper, so omit it entirely rather than naming it. Never invent or shorten a URL.
    Add a "Where to buy" line from the LIVE PRICES: the lowest price, the marketplace, the exact variant (storage, colour),
    the sale badge if any, and the product link. If a price says NOT verified, say so instead of quoting it as current.
 2. A compact comparison table: model, price, score, and one column per priority.
@@ -1168,13 +1196,25 @@ async def run_recommendation(query: str, price_mode: str | None = None) -> Async
     async def worker():
         final_state: dict = {}
         try:
+            # Starting four stdio MCP servers can take a while on a cold cache (uvx/npx may still be fetching
+            # them), and it happens before the graph produces any event, so announce it explicitly.
+            await queue.put({"type": "step", "node": "_mcp_boot",
+                             "elapsed": str(datetime.now() - started).split(".")[0]})
             async with open_servers() as servers:
                 config = make_config(build_agents(servers), servers, price_mode)
                 with trace("Product recommender (HF Space)", metadata={"query": query[:200]}):
-                    async for mode, chunk in graph.astream({"query": query}, config, stream_mode=["updates", "values"]):
-                        if mode == "updates":
+                    async for mode, chunk in graph.astream({"query": query}, config,
+                                                          stream_mode=["updates", "values", "debug"]):
+                        elapsed = str(datetime.now() - started).split(".")[0]
+                        if mode == "debug":
+                            # "task" fires when a node *starts*. "updates" only fires when one finishes, and some
+                            # nodes run for minutes, so without this the log stays empty for most of the run.
+                            if chunk.get("type") == "task":
+                                name = (chunk.get("payload") or {}).get("name")
+                                if name:
+                                    await queue.put({"type": "step", "node": name, "elapsed": elapsed})
+                        elif mode == "updates":
                             for node, update in chunk.items():
-                                elapsed = str(datetime.now() - started).split(".")[0]
                                 for line in (update or {}).get("log", []):
                                     await queue.put({"type": "log", "node": node, "line": line, "elapsed": elapsed})
                         else:
@@ -1187,9 +1227,21 @@ async def run_recommendation(query: str, price_mode: str | None = None) -> Async
             await queue.put({"type": "error", "error": f"{type(e).__name__}: {e}", "state": final_state})
 
     task = asyncio.create_task(worker())
+    # LangGraph's "updates" stream only fires when a node *finishes*, and the live-price node routinely runs for
+    # several minutes. Without a heartbeat the UI shows an empty log the whole time and looks hung, so emit a tick
+    # whenever the queue goes quiet, carrying the elapsed time and the last step that completed.
+    last_node = ""
     try:
         while True:
-            event = await queue.get()
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=5)
+            except asyncio.TimeoutError:
+                yield {"type": "tick",
+                       "elapsed": str(datetime.now() - started).split(".")[0],
+                       "after": last_node}
+                continue
+            if event.get("type") in ("log", "step"):
+                last_node = event.get("node") or last_node
             yield event
             if event["type"] in ("done", "error"):
                 break

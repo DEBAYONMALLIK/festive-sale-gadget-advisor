@@ -1,12 +1,12 @@
 # One environment, no Docker. These exact versions are the only combination that lets openai-agents and
-# browser-use coexist, which is what makes the free Gradio Space possible:
+# browser-use coexist, which is what makes running without a second virtualenv possible:
 #
 #   browser-use   0.11.13  ->  openai<3,>=2.7.2   mcp>=1.10.1      (flexible; 0.12+ hard-pin openai and mcp)
 #   openai-agents 0.17.3   ->  openai<3,>=2.26.0  mcp<2,>=1.19.0   (0.17.4+ require openai>=2.36)
 #   intersection             ->  openai==2.26.0     mcp==1.26.0
 #
 # Do not bump any of these four without re-checking the other three - browser-use 0.12+ pins openai==2.16.0
-# and mcp==1.26.0+ exactly, and openai-agents 0.21+ requires openai>=3, either of which breaks the set.
+# and mcp exactly, and openai-agents 0.21+ requires openai>=3, either of which breaks the set.
 openai==2.26.0
 openai-agents==0.17.3
 browser-use==0.11.13
@@ -19,7 +19,15 @@ python-dotenv==1.2.3
 gradio==6.29.0
 tabulate
 
-# MCP servers installed as Python packages so `_cmd()` finds them on PATH and no uvx download is needed per run.
-# The Tavily and Memory servers are Node and come from packages.txt + npx.
-yt-mcp-server==0.1.2
-reddit-rss-mcp==1.2.1
+# Runs the MCP servers in their own throwaway environments.
+#
+# The YouTube and Reddit MCP servers are deliberately NOT installed here. Both would drag mcp>=2 into this
+# environment and break openai-agents 0.17.3, which needs mcp<2:
+#
+#   reddit-rss-mcp 1.2.1 -> mcp<3,>=2.1.1
+#   yt-mcp-server  0.1.2 -> fastmcp>=2.0.0 -> mcp>=2
+#
+# pipeline.py therefore launches them with `uvx`, which resolves each server in an isolated environment where its
+# own mcp version does no harm. Installing uv from pip puts the `uv` and `uvx` executables next to this
+# interpreter; uv is a self-contained binary, so it adds no Python dependencies of its own.
+uv

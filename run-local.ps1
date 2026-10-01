@@ -27,9 +27,15 @@ $PyArgs = @()
 $found = @()   # interpreters that ran but were too old, for a useful error message
 
 function Get-PyVersion($exe, [string[]]$extra) {
+    # Uses --version rather than -c "...", because Windows PowerShell 5.1 strips embedded double quotes when
+    # building the command line for a native process: -c 'import sys;print("%d.%d"%sys.version_info[:2])' reaches
+    # python as print(%d.%d%sys.version_info[:2]) and dies with a SyntaxError. PowerShell 7.3+ fixed the argument
+    # passing, so this only bites on 5.1 - which is what `powershell.exe` still is on every Windows box.
     try {
-        $out = & $exe @extra -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>$null
-        if ($LASTEXITCODE -eq 0 -and $out -match '^\d+\.\d+$') { return "$out".Trim() }
+        $out = & $exe @extra --version 2>&1
+        if ($LASTEXITCODE -eq 0 -and "$out" -match 'Python\s+(\d+)\.(\d+)') {
+            return "$($Matches[1]).$($Matches[2])"
+        }
     } catch { }
     return $null
 }
@@ -177,7 +183,10 @@ if (-not (Test-Path $Cf)) {
 # --------------------------------------------------------------- run it ----
 $env:PORT = $Port
 Say "Starting the app on http://localhost:$Port"
-$app = Start-Process -FilePath $VenvPy -ArgumentList (Join-Path $AppDir 'app.py') `
+# The path is quoted: Start-Process joins ArgumentList into one command line, so an unquoted path containing
+# spaces (C:\Users\Me\My Projects\...) would arrive at python as two separate arguments.
+$AppPy = Join-Path $AppDir 'app.py'
+$app = Start-Process -FilePath $VenvPy -ArgumentList @("`"$AppPy`"") `
                      -WorkingDirectory $AppDir -PassThru -NoNewWindow
 
 Write-Host '   waiting for it to come up...'
@@ -228,9 +237,13 @@ if ($publicUrl) {
     Write-Host ' YOUR PUBLIC URL' -ForegroundColor Green
     Write-Host "   $publicUrl" -ForegroundColor White
     Write-Host ''
-    Write-Host ' Paste that into the front end to connect it:' -ForegroundColor Green
-    Write-Host '   https://festive-sale-gadget-advisor.vercel.app' -ForegroundColor White
-    Write-Host '   -> scroll to "Run it" and paste it into the "Connect a backend" box'
+    Write-Host ''
+    Write-Host ' SHARE THIS ONE LINK (it carries the backend, nothing to paste):' -ForegroundColor Green
+    $enc = [uri]::EscapeDataString($publicUrl)
+    Write-Host "   https://festive-sale-gadget-advisor.vercel.app/?backend=$enc" -ForegroundColor White
+    Write-Host ''
+    Write-Host ' Or open the front end and paste the URL above into "Connect a backend":' -ForegroundColor Green
+    Write-Host '   https://festive-sale-gadget-advisor.vercel.app'
 } else {
     Write-Host ' Tunnel did not report a URL. Check the log:' -ForegroundColor Yellow
     Write-Host "   $log"
