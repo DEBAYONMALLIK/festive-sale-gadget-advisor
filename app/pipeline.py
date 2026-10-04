@@ -20,7 +20,7 @@ import subprocess
 import sys
 import time
 import uuid
-from collections import defaultdict
+from collections import defaultdict, deque
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import date, datetime
 from pathlib import Path
@@ -64,6 +64,10 @@ SMART_MODEL = os.getenv("SMART_MODEL", "gpt-5")         # reviewer + final write
 
 MAX_FINALISTS = int(os.getenv("MAX_FINALISTS", "4"))
 MAX_REVIEW_LOOPS = int(os.getenv("MAX_REVIEW_LOOPS", "2"))
+# No step reports nothing for this long while healthy, so treat a longer silence as a blocked step and
+# end the run with an error instead of leaving the UI claiming it is still working.
+STALL_LIMIT_SECONDS = int(os.getenv("STALL_LIMIT_SECONDS", "900"))
+MEMORY_TIMEOUT = float(os.getenv("MEMORY_TIMEOUT", "120"))
 CACHE_DAYS = int(os.getenv("CACHE_DAYS", "30"))
 
 
@@ -74,6 +78,10 @@ def today() -> str:
 # ---- live marketplace prices ----
 MAX_SHORTLIST = MAX_FINALISTS + 2
 MARKETPLACES = ["amazon", "flipkart"]
+# Reading live prices means driving a real Chrome through Amazon and Flipkart, which costs minutes per
+# product and dominates the run. Off by default: the shortlist keeps the search-result estimate from
+# candidate_filter, and every downstream consumer already labels an unverified price as an estimate.
+LIVE_PRICES = _env_bool("LIVE_PRICES", False)
 PRICE_MODE = os.getenv("PRICE_MODE", "lowest")                 # "lowest" = every variant, "fast" = default variant only
 BROWSER_MODEL = os.getenv("BROWSER_MODEL", "gpt-5-mini")
 HEADLESS = _env_bool("PRICE_HEADLESS", False)                  # headed inside Xvfb when a display is available
@@ -183,6 +191,12 @@ if os.name == "nt":
     agents.mcp.server.stdio_client = functools.partial(agents.mcp.server.stdio_client, errlog=subprocess.DEVNULL)
 
 from agents import Agent, ModelSettings, Runner, trace  # noqa: E402
+try:                                        # RunHooks is how the SDK reports tool calls live
+    from agents import RunHooks            # noqa: E402
+except ImportError:                         # older SDK: fall back to post-run reporting only
+    RunHooks = None                        # type: ignore[assignment]
+
+import trace_log as T  # noqa: E402
 from agents.mcp import MCPServerStdio, create_static_tool_filter  # noqa: E402
 from openai.types.shared import Reasoning  # noqa: E402
 
@@ -254,7 +268,11 @@ async def open_servers(*names):
                 max_retry_attempts=2,
                 tool_filter=create_static_tool_filter(allowed_tool_names=spec["tools"]) if spec["tools"] else None,
             )
+            started = time.time()
+            T.info(f"MCP server {name}: starting ({spec['params'].get('command', '?')})", indent=4)
             servers[name] = await stack.enter_async_context(server)
+            T.ok(f"MCP server {name}: ready in {time.time() - started:.1f}s", indent=4)
+        T.ok(f"all {len(servers)} MCP servers ready")
         yield servers
 
 
@@ -367,8 +385,50 @@ class DeepDiveTask(TypedDict):
 FAST_SETTINGS = ModelSettings(reasoning=Reasoning(effort="low"))
 
 
+if RunHooks is not None:
+    class _TraceHooks(RunHooks):
+        """Prints each tool call as it happens. Overriding a hook the installed SDK does not define is
+        harmless - it simply never gets called - so this stays compatible across SDK versions."""
+
+        def __init__(self) -> None:
+            # One agent turn can fire the same tool many times at once (the candidate filter runs ~8
+            # tavily_search calls in parallel). Keyed by name alone, every call overwrote the same slot
+            # and the first completion popped it, so the rest reported a nonsense "-0.0s". A FIFO queue
+            # per tool name cannot match a specific start to a specific end without a call id, but it
+            # does give each completion a real start time instead of "now".
+            self._started: dict[str, deque[float]] = defaultdict(deque)
+
+        async def on_tool_start(self, context, agent, tool):
+            name = getattr(tool, "name", str(tool))
+            self._started[name].append(time.time())
+            T.tool_start(getattr(agent, "name", "agent"), name)
+
+        async def on_tool_end(self, context, agent, tool, result):
+            name = getattr(tool, "name", str(tool))
+            queue_ = self._started[name]
+            began = queue_.popleft() if queue_ else time.time()
+            T.tool_end(getattr(agent, "name", "agent"), name, result, max(0.0, time.time() - began))
+
+        async def on_llm_start(self, context, agent, system_prompt, input_items):
+            T.llm_call(getattr(agent, "name", "agent"), len(input_items or []))
+else:
+    _TraceHooks = None  # type: ignore[assignment]
+
+
 async def run_agent(agent: Agent, prompt: str, max_turns: int = 15):
-    result = await Runner.run(agent, prompt, max_turns=max_turns)
+    name, model = getattr(agent, "name", "agent"), str(getattr(agent, "model", "?"))
+    T.agent_start(name, model, len(prompt))
+    started = time.time()
+    try:
+        if _TraceHooks is not None:
+            result = await Runner.run(agent, prompt, max_turns=max_turns, hooks=_TraceHooks())
+        else:
+            result = await Runner.run(agent, prompt, max_turns=max_turns)
+    except Exception as e:
+        T.error(f"{name} failed after {time.time() - started:.1f}s: {type(e).__name__}: {e}")
+        raise
+    turns = len(getattr(result, "raw_responses", []) or [])
+    T.agent_done(name, time.time() - started, len(str(result.final_output)), turns)
     return result.final_output
 
 
@@ -771,6 +831,20 @@ async def live_prices(state: RecState, config) -> dict:
     c = state["constraints"]
     mode = (config or {}).get("configurable", {}).get("price_mode") or PRICE_MODE
     shortlist = add_user_models(c.user_shortlist, state["finalists"])
+
+    if not LIVE_PRICES:
+        # Returning no quotes is deliberate rather than a failure mode: price_digest already renders an
+        # empty quote list as "price NOT verified ... only a search-result estimate", and the writer is
+        # instructed to repeat that rather than quote an estimate as a current price. So the answer gets
+        # weaker but stays honest, which is the trade an MVP wants over a browser that takes an hour.
+        kept = sorted(shortlist, key=lambda f: not is_user_model(c.user_shortlist, f))[:MAX_FINALISTS]
+        T.warn(f"live prices OFF - keeping {len(kept)} finalists with search-result estimates only")
+        for f in kept:
+            T.info(f"{f.name}: ~Rs {f.approx_price:,.0f} (estimate, not checked on any marketplace)", indent=4)
+        return {"finalists": kept, "quotes": [],
+                "log": [f"{f.name}: ~₹{f.approx_price:,.0f} (estimate - live price check is off)" for f in kept]
+                       + ["live price check skipped (LIVE_PRICES=0); prices below are estimates, not verified"]}
+
     items = [{"name": f.name, "search_name": f.search_name, "ref": f.approx_price} for f in shortlist]
     quotes = await fetch_prices_for(items, MARKETPLACES, mode)
     log_quotes(quotes)
@@ -875,10 +949,14 @@ async def memory_check(state: RecState, config) -> dict:
     criteria = [p.criterion for p in state["constraints"].priorities]
     finalists = [f.name for f in state["finalists"]]
     try:
-        cached = [e for e in await memory_load(memory, finalists) if e.criterion in criteria + ["red_flags"]]
-    except Exception as e:
+        # The cache is an optimisation, never required for an answer. wait_for matters as much as the except:
+        # if the memory MCP server has died, its stdio read blocks forever and never raises, which stalls the
+        # whole graph one step after the hour-long price step - the most expensive possible place to hang.
+        loaded = await asyncio.wait_for(memory_load(memory, finalists), timeout=MEMORY_TIMEOUT)
+        cached = [e for e in loaded if e.criterion in criteria + ["red_flags"]]
+    except (Exception, asyncio.TimeoutError) as e:
         cached = []
-        state_note = f" (memory read failed: {type(e).__name__})"
+        state_note = f" (memory read failed: {type(e).__name__}; continuing without the cache)"
     else:
         state_note = ""
 
@@ -1073,8 +1151,11 @@ WRITER_INSTRUCTIONS = '''You write the final recommendation for the shopper, in 
 2. A compact comparison table: model, price, score, and one column per priority.
 3. "Who should pick what": one line per model.
 4. "Also considered": rejected models with the reason.
-5. Caveats: the reviewer's concerns; that prices were read at the time shown and can move during the sales, so mention the
-   upcoming sale dates from the Sales line and suggest re-checking then; and that bank offers are not included in the prices.
+5. Caveats: the reviewer's concerns; the upcoming sale dates from the Sales line with a suggestion to re-check then; and
+   that bank offers are never included. About the prices themselves: if the price block is headed LIVE PRICES, say they
+   were read at the time shown and can move during the sales. If it is headed ESTIMATES ONLY, say plainly that no
+   marketplace was checked, that every figure is an approximate search-result price, and that the shopper must confirm
+   it on the listing before buying. Never describe an estimate as a current, live or verified price.
 Use only facts from the provided research. Be direct and concise.'''
 
 
@@ -1098,7 +1179,8 @@ async def writer(state: RecState, config) -> dict:
     prompt = (f"Shopper request: {state['query']}\n\n{constraints_brief(state['constraints'])}\n\n"
               f"Score table:\n{pd.DataFrame(state['scores']).to_string(index=False)}\n\n"
               f"Evidence:{evidence_digest(state['finalists'], state.get('evidence', []), max_urls=3)}\n\n"
-              f"LIVE PRICES (lowest in-stock variant per marketplace):\n{price_digest(state)}\n\n"
+              f"{'LIVE PRICES (lowest in-stock variant per marketplace)' if LIVE_PRICES else 'PRICES (ESTIMATES ONLY - no marketplace was checked; say so, never quote these as current)'}:\n"
+              f"{price_digest(state)}\n\n"
               f"Sales: {sale_status()}\n\n"
               f"Rejected:\n{rejected or 'none'}\n\n"
               f"Reviewer concerns: {'; '.join(review.concerns) if review else 'none'}")
@@ -1193,11 +1275,15 @@ async def run_recommendation(query: str, price_mode: str | None = None) -> Async
     queue: asyncio.Queue = asyncio.Queue()
     started = datetime.now()
 
+    node_started: dict[str, float] = {}
+
     async def worker():
         final_state: dict = {}
         try:
             # Starting four stdio MCP servers can take a while on a cold cache (uvx/npx may still be fetching
             # them), and it happens before the graph produces any event, so announce it explicitly.
+            T.banner(f"RUN  {query[:60]}")
+            T.info(f"live price check: {'ON (browser)' if LIVE_PRICES else 'OFF (estimates only)'}", indent=2)
             await queue.put({"type": "step", "node": "_mcp_boot",
                              "elapsed": str(datetime.now() - started).split(".")[0]})
             async with open_servers() as servers:
@@ -1212,18 +1298,26 @@ async def run_recommendation(query: str, price_mode: str | None = None) -> Async
                             if chunk.get("type") == "task":
                                 name = (chunk.get("payload") or {}).get("name")
                                 if name:
+                                    T.node(name)
+                                    node_started[name] = time.time()
                                     await queue.put({"type": "step", "node": name, "elapsed": elapsed})
                         elif mode == "updates":
                             for node, update in chunk.items():
+                                T.node_done(node, time.time() - node_started.pop(node, time.time()))
                                 for line in (update or {}).get("log", []):
+                                    T.info(line, indent=4)
                                     await queue.put({"type": "log", "node": node, "line": line, "elapsed": elapsed})
                         else:
                             final_state = chunk
                             await queue.put({"type": "state", "state": chunk})
+            T.banner("RUN COMPLETE")
             await queue.put({"type": "done", "state": final_state})
         except asyncio.CancelledError:
             raise
         except Exception as e:
+            import traceback
+            T.error(f"RUN FAILED: {type(e).__name__}: {e}")
+            traceback.print_exc()          # the full stack is the whole point of having a terminal
             await queue.put({"type": "error", "error": f"{type(e).__name__}: {e}", "state": final_state})
 
     task = asyncio.create_task(worker())
@@ -1231,17 +1325,34 @@ async def run_recommendation(query: str, price_mode: str | None = None) -> Async
     # several minutes. Without a heartbeat the UI shows an empty log the whole time and looks hung, so emit a tick
     # whenever the queue goes quiet, carrying the elapsed time and the last step that completed.
     last_node = ""
+    last_activity = time.monotonic()
+    last_state: dict = {}          # the worker's own final_state is a closure local; keep our own copy here
     try:
         while True:
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=5)
             except asyncio.TimeoutError:
+                # Every node reports as it works, so a long silence means a node is blocked on something that
+                # has no timeout of its own - a dead MCP server's stdio pipe, or a browser worker that never
+                # exits. Nothing downstream will ever unblock it, so give up rather than hang until the user
+                # closes the tab believing the run is still going.
+                if time.monotonic() - last_activity > STALL_LIMIT_SECONDS:
+                    T.error(f"STALLED after '{last_node or 'start'}' - no activity for "
+                            f"{STALL_LIMIT_SECONDS // 60} minutes; giving up")
+                    yield {"type": "error",
+                           "error": (f"Stalled: no activity for {STALL_LIMIT_SECONDS // 60} minutes after "
+                                     f"'{last_node or 'start'}'. The step is blocked, not slow."),
+                           "state": last_state}
+                    break
                 yield {"type": "tick",
                        "elapsed": str(datetime.now() - started).split(".")[0],
                        "after": last_node}
                 continue
+            last_activity = time.monotonic()
             if event.get("type") in ("log", "step"):
                 last_node = event.get("node") or last_node
+            if event.get("type") in ("state", "done") and event.get("state"):
+                last_state = event["state"]
             yield event
             if event["type"] in ("done", "error"):
                 break
