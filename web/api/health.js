@@ -116,3 +116,6 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.status(reachable ? 200 : 503).json(body);
 }
+
+// Named export so the allowlist can be tested directly. Vercel only ever uses the default export.
+export { safeBackend, ALLOWED_SUFFIXES };
