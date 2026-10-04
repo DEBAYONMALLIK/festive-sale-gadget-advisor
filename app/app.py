@@ -55,6 +55,12 @@ def _ensure_display() -> None:
 _ensure_display()
 
 import pipeline as P  # noqa: E402  - imported after the display is set up
+import trace_log as T  # noqa: E402
+
+# A step that emits nothing for this long is almost certainly stuck rather than slow: the longest healthy
+# step (live prices) reports per-product lines as it goes. Warn at the first number, give up at the second.
+QUIET_WARN_SECONDS = int(os.getenv("QUIET_WARN_SECONDS", "240"))
+STALL_LIMIT_SECONDS = int(os.getenv("STALL_LIMIT_SECONDS", "900"))
 
 MAX_RUNS_PER_DAY = int(os.getenv("MAX_RUNS_PER_DAY", "10"))          # full research runs (each costs OpenAI tokens)
 MAX_PRICE_CHECKS_PER_DAY = int(os.getenv("MAX_PRICE_CHECKS_PER_DAY", "40"))
@@ -141,7 +147,8 @@ STEP_LABELS = {
     "reddit_scout":     "Searching Reddit for candidate models",
     "web_scout":        "Searching the web for buying guides",
     "candidate_filter": "Verifying specs and building a shortlist",
-    "live_prices":      "Opening Amazon.in and Flipkart in Chrome",
+    "live_prices":      ("Opening Amazon.in and Flipkart in Chrome" if P.LIVE_PRICES
+                         else "Collecting price estimates"),
     "memory_check":     "Checking the research cache",
     "reddit_deep_dive": "Reddit deep dive (owner experiences)",
     "youtube_deep_dive": "YouTube deep dive (review videos)",
@@ -154,7 +161,9 @@ STEP_LABELS = {
 # Extra reassurance for the steps that legitimately take a long time.
 STEP_HINTS = {
     "_mcp_boot":         "First run after a restart also downloads them, which can take a few minutes.",
-    "live_prices":       "Chrome is reading every variant on both sites. This is the slowest step — several minutes.",
+    "live_prices":       ("Chrome is reading every variant on both sites. This is the slowest step — several minutes."
+                          if P.LIVE_PRICES else
+                          "Live price checking is off, so these are search-result estimates, not verified prices."),
     "reddit_scout":      "Reddit rate-limits hard, so this can run for several minutes.",
     "reddit_deep_dive":  "Reddit rate-limits hard, so this step is slow by nature.",
     "youtube_deep_dive": "Fetching and searching video transcripts.",
@@ -168,24 +177,27 @@ STEP_HINTS = {
 # instance - can buffer that stream and hold small events back until its buffer fills, which makes the whole run
 # look frozen and then arrive at once, half an hour late. The timer below polls over ordinary request/response,
 # which proxies do not buffer, so the status and log update reliably no matter what sits in between.
-_PROGRESS: dict = {"headline": "", "hint": "", "log": [], "started": None, "running": False, "final": ""}
+_PROGRESS: dict = {"headline": "", "hint": "", "log": [], "started": None, "running": False, "final": "",
+                   "last_event": None}
 _plock = threading.Lock()
 
 
 def _p_reset() -> None:
     with _plock:
         _PROGRESS.update(headline="Starting the agents", hint="", log=[], started=time.monotonic(),
-                         running=True, final="")
+                         running=True, final="", last_event=time.monotonic())
 
 
 def _p_step(headline: str, hint: str = "") -> None:
     with _plock:
         _PROGRESS["headline"], _PROGRESS["hint"] = headline, hint
+        _PROGRESS["last_event"] = time.monotonic()
 
 
 def _p_log(line: str) -> None:
     with _plock:
         _PROGRESS["log"].append(line)
+        _PROGRESS["last_event"] = time.monotonic()
 
 
 def _p_final(text: str) -> None:
@@ -204,6 +216,7 @@ def poll_progress():
         headline, hint = _PROGRESS["headline"], _PROGRESS["hint"]
         log_text = "\n".join(_PROGRESS["log"])
         started, running, final = _PROGRESS["started"], _PROGRESS["running"], _PROGRESS["final"]
+        last_event = _PROGRESS["last_event"]
 
     if not running and not final and not log_text:
         return gr.skip(), gr.skip()            # nothing has ever run; leave the UI alone
@@ -211,7 +224,14 @@ def poll_progress():
         return final or "✅ Done.", log_text
 
     status = f"⏳ **{headline}…** — {_elapsed(started)} elapsed of a typical 40–50 minutes."
-    if hint:
+    # The elapsed clock above is computed in this poll, so it keeps counting even if the pipeline has stopped
+    # emitting anything. Without the line below a stall is indistinguishable from a slow step.
+    quiet = (time.monotonic() - last_event) if last_event else 0.0
+    if quiet > QUIET_WARN_SECONDS:
+        status += (f"\n\n⚠️ **No activity for {int(quiet // 60)} minutes.** The step above may be stuck. "
+                   f"The run gives up on its own after {STALL_LIMIT_SECONDS // 60} quiet minutes; "
+                   f"the PowerShell window shows what it is waiting on.")
+    elif hint:
         status += f"\n\n<small>{hint}</small>"
     return status, log_text
 
@@ -621,7 +641,35 @@ def _attach_healthz(fastapi_app) -> None:
         print(f"[health] could not attach /healthz: {exc!r}", flush=True)
 
 
+KEY_NAMES = ["OPENAI_API_KEY", "TAVILY_API_KEY", "YOUTUBE_API_KEY", "GOOGLE_API_KEY",
+             "SERPER_API_KEY", "LANGSMITH_API_KEY"]
+
+
+def _startup_report() -> None:
+    """Print what the server is about to run with, so a misconfiguration is obvious before the first
+    run rather than forty minutes into one."""
+    T.banner("Festive Sale Gadget Advisor")
+    T.print_key_inventory(KEY_NAMES)
+    T.print_settings({
+        "live price check": "ON (real Chrome)" if P.LIVE_PRICES else "OFF - estimates only",
+        "fast model": P.FAST_MODEL,
+        "smart model": P.SMART_MODEL,
+        "review loops": P.MAX_REVIEW_LOOPS,
+        "finalists": P.MAX_FINALISTS,
+        "runs/day": MAX_RUNS_PER_DAY,
+        "price checks/day": MAX_PRICE_CHECKS_PER_DAY,
+        "stall limit": f"{STALL_LIMIT_SECONDS // 60} min of silence",
+        "verbose tool logs": "on" if T.VERBOSE else "off (LOG_VERBOSE=0)",
+        "port": os.getenv("PORT", "7860"),
+    })
+    missing = [n for n in ("OPENAI_API_KEY",) if not os.getenv(n)]
+    if missing:
+        T.error(f"{', '.join(missing)} is not set - runs will fail immediately")
+    T.banner("Ready - waiting for a request")
+
+
 if __name__ == "__main__":
+    _startup_report()
     fastapi_app, _local, _share = demo.queue(max_size=20).launch(
         server_name="0.0.0.0", server_port=int(os.getenv("PORT", "7860")),
         theme=gr.themes.Soft(), css=CSS, ssr_mode=False, prevent_thread_lock=True)
