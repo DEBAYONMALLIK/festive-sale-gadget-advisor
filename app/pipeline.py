@@ -268,10 +268,10 @@ async def open_servers(*names):
                 max_retry_attempts=2,
                 tool_filter=create_static_tool_filter(allowed_tool_names=spec["tools"]) if spec["tools"] else None,
             )
-            started = time.time()
+            started = time.monotonic()
             T.info(f"MCP server {name}: starting ({spec['params'].get('command', '?')})", indent=4)
             servers[name] = await stack.enter_async_context(server)
-            T.ok(f"MCP server {name}: ready in {time.time() - started:.1f}s", indent=4)
+            T.ok(f"MCP server {name}: ready in {time.monotonic() - started:.1f}s", indent=4)
         T.ok(f"all {len(servers)} MCP servers ready")
         yield servers
 
@@ -400,14 +400,15 @@ if RunHooks is not None:
 
         async def on_tool_start(self, context, agent, tool):
             name = getattr(tool, "name", str(tool))
-            self._started[name].append(time.time())
+            self._started[name].append(time.monotonic())
             T.tool_start(getattr(agent, "name", "agent"), name)
 
         async def on_tool_end(self, context, agent, tool, result):
             name = getattr(tool, "name", str(tool))
             queue_ = self._started[name]
-            began = queue_.popleft() if queue_ else time.time()
-            T.tool_end(getattr(agent, "name", "agent"), name, result, max(0.0, time.time() - began))
+            began = queue_.popleft() if queue_ else time.monotonic()
+            T.tool_end(getattr(agent, "name", "agent"), name, result,
+                       max(0.0, time.monotonic() - began))
 
         async def on_llm_start(self, context, agent, system_prompt, input_items):
             T.llm_call(getattr(agent, "name", "agent"), len(input_items or []))
@@ -418,17 +419,17 @@ else:
 async def run_agent(agent: Agent, prompt: str, max_turns: int = 15):
     name, model = getattr(agent, "name", "agent"), str(getattr(agent, "model", "?"))
     T.agent_start(name, model, len(prompt))
-    started = time.time()
+    started = time.monotonic()
     try:
         if _TraceHooks is not None:
             result = await Runner.run(agent, prompt, max_turns=max_turns, hooks=_TraceHooks())
         else:
             result = await Runner.run(agent, prompt, max_turns=max_turns)
     except Exception as e:
-        T.error(f"{name} failed after {time.time() - started:.1f}s: {type(e).__name__}: {e}")
+        T.error(f"{name} failed after {time.monotonic() - started:.1f}s: {type(e).__name__}: {e}")
         raise
     turns = len(getattr(result, "raw_responses", []) or [])
-    T.agent_done(name, time.time() - started, len(str(result.final_output)), turns)
+    T.agent_done(name, time.monotonic() - started, len(str(result.final_output)), turns)
     return result.final_output
 
 
@@ -637,10 +638,10 @@ async def fetch_listing(query: str, site: str, mode: str | None = None, extra_ru
     if CHROME_PATH:
         cmd += ["--chrome", CHROME_PATH]
 
-    started = time.time()
+    started = time.monotonic()
     async with _sem():
         await asyncio.to_thread(_run_worker, cmd, log_file, PRICE_TIMEOUT + 90)
-    seconds = round(time.time() - started, 1)
+    seconds = round(time.monotonic() - started, 1)
     try:
         listing = Listing.model_validate_json(out_file.read_text(encoding="utf-8"))
     except Exception as e:
@@ -838,9 +839,8 @@ async def live_prices(state: RecState, config) -> dict:
         # instructed to repeat that rather than quote an estimate as a current price. So the answer gets
         # weaker but stays honest, which is the trade an MVP wants over a browser that takes an hour.
         kept = sorted(shortlist, key=lambda f: not is_user_model(c.user_shortlist, f))[:MAX_FINALISTS]
-        T.warn(f"live prices OFF - keeping {len(kept)} finalists with search-result estimates only")
-        for f in kept:
-            T.info(f"{f.name}: ~Rs {f.approx_price:,.0f} (estimate, not checked on any marketplace)", indent=4)
+        # Only return the lines; the astream loop prints every log line a node returns. Printing here
+        # as well is how the same four finalists ended up on the terminal twice.
         return {"finalists": kept, "quotes": [],
                 "log": [f"{f.name}: ~₹{f.approx_price:,.0f} (estimate - live price check is off)" for f in kept]
                        + ["live price check skipped (LIVE_PRICES=0); prices below are estimates, not verified"]}
@@ -1275,7 +1275,7 @@ async def run_recommendation(query: str, price_mode: str | None = None) -> Async
     queue: asyncio.Queue = asyncio.Queue()
     started = datetime.now()
 
-    node_started: dict[str, float] = {}
+    node_started: dict[str, deque[float]] = defaultdict(deque)
 
     async def worker():
         final_state: dict = {}
@@ -1299,14 +1299,21 @@ async def run_recommendation(query: str, price_mode: str | None = None) -> Async
                                 name = (chunk.get("payload") or {}).get("name")
                                 if name:
                                     T.node(name)
-                                    node_started[name] = time.time()
+                                    # reddit_deep_dive/youtube_deep_dive run once per (model, source),
+                                    # so several tasks share a node name at the same time - same FIFO
+                                    # queue trick the tool hooks use, for the same reason.
+                                    node_started[name].append(time.monotonic())
                                     await queue.put({"type": "step", "node": name, "elapsed": elapsed})
                         elif mode == "updates":
                             for node, update in chunk.items():
-                                T.node_done(node, time.time() - node_started.pop(node, time.time()))
                                 for line in (update or {}).get("log", []):
                                     T.info(line, indent=4)
                                     await queue.put({"type": "log", "node": node, "line": line, "elapsed": elapsed})
+                                # after the lines, so the terminal reads work-then-result rather than
+                                # announcing a node finished and only then showing what it produced
+                                begun = node_started[node]
+                                T.node_done(node, time.monotonic()
+                                            - (begun.popleft() if begun else time.monotonic()))
                         else:
                             final_state = chunk
                             await queue.put({"type": "state", "state": chunk})

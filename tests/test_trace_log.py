@@ -53,6 +53,16 @@ class TestShortResultsAreSurfaced:
         T.tool_end("Candidate filter", "tavily_search", "x" * 100, 0.7)
         assert "suspiciously short" in capsys.readouterr().out
 
+    def test_a_measured_zero_duration_is_still_printed(self, capsys):
+        # A fast call really can measure 0.0s, especially on Windows where the clock is coarse.
+        # Treating that as "no measurement" dropped the timing entirely and broke a CI run.
+        T.tool_end("Candidate filter", "tavily_search", "y" * 4000, 0.0)
+        assert "in 0.0s" in capsys.readouterr().out
+
+    def test_no_timing_is_printed_when_none_was_measured(self, capsys):
+        T.tool_end("Candidate filter", "tavily_search", "y" * 4000)
+        assert " in " not in capsys.readouterr().out
+
     def test_a_normal_result_is_summarised_not_dumped(self, capsys):
         T.tool_end("Candidate filter", "tavily_search", "y" * 4000, 1.6)
         out = capsys.readouterr().out

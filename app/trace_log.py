@@ -99,13 +99,15 @@ SHORT_RESULT_CHARS = int(os.getenv("LOG_SHORT_RESULT_CHARS", "300"))
 SHOW_RESULTS = os.getenv("LOG_TOOL_RESULT", "0") == "1"
 
 
-def tool_end(agent: str, tool: str, result: object, seconds: float = 0.0) -> None:
+def tool_end(agent: str, tool: str, result: object, seconds: float | None = None) -> None:
     if not VERBOSE:
         return
     text = "" if result is None else str(result)
     size = f"{len(text):,} chars" if text else "empty"
-    _emit(BLUE("←"), f"{DIM(agent)} {BOLD(tool)} → {size}"
-                     + (DIM(f" in {seconds:.1f}s") if seconds else ""), 4)
+    # `if seconds` would treat a measured 0.0s as "no measurement" and print nothing. A call really can
+    # take under a tenth of a second, so the distinction that matters is measured vs not measured.
+    timing = DIM(f" in {seconds:.1f}s") if seconds is not None else ""
+    _emit(BLUE("←"), f"{DIM(agent)} {BOLD(tool)} → {size}" + timing, 4)
     if text and (SHOW_RESULTS or len(text) <= SHORT_RESULT_CHARS):
         preview = " ".join(text.split())[:400]
         tag = YELLOW("suspiciously short:") if len(text) <= SHORT_RESULT_CHARS else DIM("result:")

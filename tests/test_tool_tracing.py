@@ -19,7 +19,9 @@ class Ag:
 
 def durations(capsys_text):
     import re
-    return [float(m) for m in re.findall(r"in (-?\d+\.\d)s", capsys_text)]
+    found = [float(m) for m in re.findall(r"in (-?\d+\.\d)s", capsys_text)]
+    assert found, f"no duration was printed at all:\n{capsys_text}"
+    return found
 
 
 class TestParallelToolCallsGetRealDurations:
@@ -47,18 +49,23 @@ class TestParallelToolCallsGetRealDurations:
         assert all(t >= 0 for t in durations(capsys.readouterr().out))
 
     def test_different_tools_do_not_share_a_queue(self, capsys):
+        # Both tools get a measurable sleep. The earlier version let tavily_search finish instantly
+        # and asserted its duration was small, which on Windows measured exactly 0.0 - and 0.0 was
+        # then not printed at all, so the test failed on timer resolution rather than on behaviour.
         hooks = P._TraceHooks()
 
         async def go():
             await hooks.on_tool_start(None, Ag(), Tool("search_reddit"))
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.4)
             await hooks.on_tool_start(None, Ag(), Tool("tavily_search"))
+            await asyncio.sleep(0.2)
             await hooks.on_tool_end(None, Ag(), Tool("tavily_search"), "y" * 5000)
             await hooks.on_tool_end(None, Ag(), Tool("search_reddit"), "y" * 5000)
 
         asyncio.run(go())
         tavily, reddit = durations(capsys.readouterr().out)
-        assert tavily < 0.2 and reddit >= 0.3, "each tool must keep its own timeline"
+        assert reddit > tavily, "the tool that started first ran longer; the queues are shared"
+        assert reddit >= 0.5 and tavily <= 0.4, f"tavily={tavily} reddit={reddit}"
 
 
 class TestNodeFanOutTiming:
