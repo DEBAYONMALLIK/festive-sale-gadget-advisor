@@ -1,0 +1,71 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:                      # a new push supersedes an in-flight run on the same branch
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: python tests (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows is not optional here. pipeline.py has an `if os.name == "nt"` branch, so a
+        # Linux-only matrix passed while every Windows machine failed to even import the module.
+        os: [ubuntu-latest, windows-latest]
+        python-version: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - name: Run tests
+        run: pytest
+        env:
+          # No run may depend on a credential. If one does, these empty values make it fail here
+          # rather than silently passing in CI and breaking on a real machine.
+          OPENAI_API_KEY: ''
+          TAVILY_API_KEY: ''
+          LIVE_PRICES: '0'
+
+  javascript:
+    name: vercel function tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run tests
+        run: node --test tests/*.test.mjs
+
+  real-imports:
+    name: imports without stubs
+    runs-on: ubuntu-latest
+    # The fast test job stubs the OpenAI Agents SDK and LangGraph. That keeps tests quick, but it
+    # also means a genuine import error in pipeline.py would not be caught there. This job installs
+    # the real packages and imports the module for real, so the stubs cannot hide a broken import.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install the real runtime dependencies
+        run: |
+          pip install openai==2.26.0 openai-agents==0.17.3 mcp==1.26.0 \
+                      langgraph==1.2.12 pydantic==2.13.5 pandas==3.0.6 python-dotenv==1.2.3
+      - name: Every file compiles
+        run: python -m compileall -q app
+      - name: pipeline imports for real
+        working-directory: app
+        run: python -c "import pipeline; print('pipeline imported, LIVE_PRICES =', pipeline.LIVE_PRICES)"
